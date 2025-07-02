@@ -177,10 +177,46 @@ class HyperliquidChat {
     const widget = document.createElement("div")
     widget.id = "hyperliquid-chat-widget"
     widget.className = "hl-chat-widget"
+    // Make resizable via CSS; dragging implemented below
+    widget.style.resize = 'both'
+    widget.style.overflow = 'hidden'
+
     widget.innerHTML = this.getChatHTML()
 
     document.body.appendChild(widget)
+    // Enable dragging by header
+    this.enableDrag(widget)
     this.setupEventListeners()
+  }
+
+  enableDrag(widget) {
+    const header = widget.querySelector('.hl-chat-header')
+    if (!header) return
+    let startX, startY, startLeft, startTop, isDragging = false
+    header.style.cursor = 'move'
+
+    const onMouseMove = (e) => {
+      if (!isDragging) return
+      const dx = e.clientX - startX
+      const dy = e.clientY - startY
+      widget.style.left = `${startLeft + dx}px`
+      widget.style.top = `${startTop + dy}px`
+    }
+    const onMouseUp = () => {
+      isDragging = false
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+    header.addEventListener('mousedown', (e) => {
+      isDragging = true
+      startX = e.clientX
+      startY = e.clientY
+      const rect = widget.getBoundingClientRect()
+      startLeft = rect.left
+      startTop = rect.top
+      document.addEventListener('mousemove', onMouseMove)
+      document.addEventListener('mouseup', onMouseUp)
+    })
   }
 
   getChatHTML() {
@@ -830,24 +866,29 @@ class HyperliquidChat {
     this.isVisible = !this.isVisible
     const container = document.querySelector(".hl-chat-container")
     if (container) {
+      container.style.opacity = this.isVisible ? '1' : '0'
+      container.style.pointerEvents = this.isVisible ? 'auto' : 'none'
       container.classList.toggle("visible", this.isVisible)
     }
   }
 
   showChat() {
     this.isVisible = true
-    const container = document.querySelector(".hl-chat-container")
+    let widget = document.getElementById('hyperliquid-chat-widget')
+    if (!widget) {
+      this.createChatWidget()
+      widget = document.getElementById('hyperliquid-chat-widget')
+    }
+    const container = widget.querySelector('.hl-chat-container')
     if (container) {
-      container.classList.add("visible")
+      container.classList.add('visible')
     }
   }
 
   hideChat() {
     this.isVisible = false
-    const container = document.querySelector(".hl-chat-container")
-    if (container) {
-      container.classList.remove("visible")
-    }
+    const widget = document.getElementById('hyperliquid-chat-widget')
+    if (widget) widget.remove()
   }
 
   // Ask page context to sign a message
