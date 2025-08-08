@@ -97,6 +97,10 @@ class HyperliquidChat {
       console.log("Initializing chat in read-only mode...")
       console.log(`Current trading pair: ${this.currentPair}, market: ${this.currentMarket}`)
       
+      if (window.IS_STANDALONE_CHAT) {
+        this.showChat();
+      }
+      
       await this.loadChatHistoryWithRetry()
       console.log("Chat history loaded successfully")
       
@@ -116,6 +120,13 @@ class HyperliquidChat {
 
   detectMarketInfo() {
     console.log("🔍 Detecting market info...")
+    
+    // Allow override when running in standalone tab
+    if (window.CHAT_PAIR_OVERRIDE) {
+      this.currentPair = window.CHAT_PAIR_OVERRIDE;
+      this.currentMarket = window.CHAT_MARKET_OVERRIDE || 'Perps';
+      return;
+    }
     
     // Detect trading pair using the specific coinInfo selector
     let pairElement = document.querySelector("#coinInfo > div > div:nth-child(2) > div:nth-child(1) > div > div > div > div:nth-child(2) > div")
@@ -185,15 +196,15 @@ class HyperliquidChat {
 
     document.body.appendChild(widget)
     // Enable dragging by header
-    this.enableDrag(widget)
+    this.enableDrag(widget, widget.querySelector('#moveChat') || widget.querySelector('.hl-chat-header'))
     this.setupEventListeners()
   }
 
-  enableDrag(widget) {
-    const header = widget.querySelector('.hl-chat-header')
-    if (!header) return
+  enableDrag(widget, handleEl) {
+    const dragHandle = handleEl
+    if (!dragHandle) return
     let startX, startY, startLeft, startTop, isDragging = false
-    header.style.cursor = 'move'
+    dragHandle.style.cursor = 'move'
 
     const onMouseMove = (e) => {
       if (!isDragging) return
@@ -207,7 +218,7 @@ class HyperliquidChat {
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseup', onMouseUp)
     }
-    header.addEventListener('mousedown', (e) => {
+    dragHandle.addEventListener('mousedown', (e) => {
       isDragging = true
       startX = e.clientX
       startY = e.clientY
@@ -235,6 +246,7 @@ class HyperliquidChat {
             <label for="autoScrollCheckbox">Auto-scroll</label>
           </div>
           <div class="hl-chat-controls">
+            ${window.IS_STANDALONE_CHAT ? `<button class="hl-chat-popin" id="popInChat" title="Return to page">⇦</button>` : `<button class="hl-chat-popout" id="popOutChat" title="Open in new tab">↗</button>`}
             <button class="hl-chat-close" id="closeChat">×</button>
           </div>
         </div>
@@ -346,6 +358,12 @@ class HyperliquidChat {
       })
     }
 
+    // Move chat
+    const moveChat = document.getElementById("moveChat")
+    if (moveChat) {
+      // dragging handled by enableDrag; nothing else needed but cursor set above
+    }
+
     // Minimize chat
     const minimizeChat = document.getElementById("minimizeChat")
     if (minimizeChat) {
@@ -399,6 +417,25 @@ class HyperliquidChat {
       nameSelect.addEventListener("change", (e) => {
         this.selectedName = e.target.value
       })
+    }
+
+    // Popout chat
+    if (!window.IS_STANDALONE_CHAT) {
+      const popBtn = document.getElementById("popOutChat")
+      if (popBtn) {
+        popBtn.addEventListener("click", () => {
+          this.hideChat()
+          chrome.runtime.sendMessage({ action: "openStandaloneChat", pair: this.currentPair, market: this.currentMarket })
+        })
+      }
+    } else {
+      const popIn = document.getElementById("popInChat")
+      if (popIn) {
+        popIn.addEventListener("click", () => {
+          chrome.runtime.sendMessage({ action: "showChat", pair: this.currentPair, market: this.currentMarket })
+          window.close()
+        })
+      }
     }
   }
 
@@ -789,6 +826,9 @@ class HyperliquidChat {
           this.realtimeChannel = null
         }
         
+        // Notify standalone windows
+        chrome.runtime.sendMessage({ action: 'roomChange', pair: this.currentPair, market: this.currentMarket })
+
         // Load new room (works with or without wallet)
         if (this.supabase) {
           console.log(`Loading new room: ${newRoomId}`)
@@ -833,6 +873,38 @@ class HyperliquidChat {
     window.chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (request.action === "toggleChat") {
         this.showChat()
+      } else if (request.action === 'showChat' && !window.IS_STANDALONE_CHAT) {
+        this.currentPair = request.pair || this.currentPair
+        this.currentMarket = request.market || this.currentMarket
+        this.showChat()
+      } else if (request.action === 'roomChange' && window.IS_STANDALONE_CHAT) {
+        const { pair, market } = request
+        if (!pair || !market) return
+        const oldRoom = `${this.currentPair}_${this.currentMarket}`
+        const newRoom = `${pair}_${market}`
+        if (oldRoom === newRoom) return
+
+        this.currentPair = pair
+        this.currentMarket = market
+        window.CHAT_PAIR_OVERRIDE = pair;
+        window.CHAT_MARKET_OVERRIDE = market;
+
+        // Reset messages and UI
+        this.messages = []
+        this.updateChatHeader()
+        const messagesContainer = document.getElementById('chatMessages')
+        if (messagesContainer) messagesContainer.innerHTML = '<div class="hl-loading">Loading…</div>'
+
+        // Supabase channel switch
+        if (this.supabase && this.realtimeChannel) {
+          this.supabase.removeChannel(this.realtimeChannel)
+          this.realtimeChannel = null
+        }
+        if (this.supabase) {
+          this.loadChatHistoryWithRetry().then(()=>{
+            this.subscribeBroadcast()
+          })
+        }
       }
     })
   }

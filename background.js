@@ -18,4 +18,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     })
     return true
   }
+
+  if (request.action === "openStandaloneChat") {
+    const url = chrome.runtime.getURL(`chat-widget.html?pair=${encodeURIComponent(request.pair||'UNKNOWN')}&market=${encodeURIComponent(request.market||'Perps')}`)
+    chrome.tabs.create({ url })
+    sendResponse({ success: true })
+    return true
+  }
+
+  if (request.action === 'roomChange' || request.action === 'showChat') {
+    chrome.tabs.query({}, (tabs) => {
+      tabs.forEach(tab => {
+        chrome.tabs.sendMessage(tab.id, request)
+      })
+    })
+    sendResponse({success:true})
+    return true
+  }
 })
