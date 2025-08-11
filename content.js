@@ -9,7 +9,7 @@ let chatInstance;
 
 // Initialize Supabase and then start the chat
 function initializeSupabase() {
-    console.log('📦 Importing Supabase library via dynamic import...');
+    console.log('Importing Supabase library via dynamic import...');
 
     // Use dynamic import so that the library executes in the same
     // (isolated) world as the content-script. This avoids page-level CSP
@@ -26,15 +26,15 @@ function initializeSupabase() {
             if (supabaseModule?.supabase?.createClient) {
                 // ESM import returned the namespace with `supabase` property.
                 createClient = supabaseModule.supabase.createClient;
-                console.log('🎯 Found createClient on supabaseModule.supabase');
+                console.log('Found createClient on supabaseModule.supabase');
             } else if (supabaseModule?.createClient) {
                 // ESM import directly returned the exports object.
                 createClient = supabaseModule.createClient;
-                console.log('🎯 Found createClient on supabaseModule');
+                console.log('Found createClient on supabaseModule');
             } else if (typeof window !== 'undefined' && window.supabase?.createClient) {
                 // UMD bundle attached `supabase` to the global object.
                 createClient = window.supabase.createClient;
-                console.log('🎯 Found createClient on window.supabase');
+                console.log('Found createClient on window.supabase');
             }
 
             if (createClient) {
@@ -119,7 +119,7 @@ class HyperliquidChat {
   }
 
   detectMarketInfo() {
-    console.log("🔍 Detecting market info...")
+    console.log("Detecting market info...")
     
     // Allow override when running in standalone tab
     if (window.CHAT_PAIR_OVERRIDE) {
@@ -130,45 +130,45 @@ class HyperliquidChat {
     
     // Detect trading pair using the specific coinInfo selector
     let pairElement = document.querySelector("#coinInfo > div > div:nth-child(2) > div:nth-child(1) > div > div > div > div:nth-child(2) > div")
-    console.log("🔍 Primary pair element:", pairElement)
+    console.log("Primary pair element:", pairElement)
     
     // Fallback selectors if the primary one fails
     if (!pairElement || !pairElement.textContent.trim()) {
-      console.log("🔍 Primary selector failed, trying fallbacks...")
+      console.log("Primary selector failed, trying fallbacks...")
       pairElement = document.querySelector(".sc-bjfHbI.bFBYgR") ||
                    document.querySelector("[data-testid='trading-pair']") || 
                    document.querySelector(".trading-pair") ||
                    document.querySelector("h1") // fallback to main heading
-      console.log("🔍 Fallback pair element:", pairElement)
+      console.log("Fallback pair element:", pairElement)
     }
     
     if (pairElement) {
       const newPair = pairElement.textContent.trim()
-      console.log(`🔍 Raw pair text: "${newPair}"`)
+      console.log(`Raw pair text: "${newPair}"`)
       
       if (newPair && newPair !== this.currentPair) {
-        console.log(`📈 Trading pair changed: "${this.currentPair}" -> "${newPair}"`)
+        console.log(`Trading pair changed: "${this.currentPair}" -> "${newPair}"`)
         this.currentPair = newPair
       }
     } else {
-      console.warn("❌ Could not find trading pair element")
+      console.warn("Could not find trading pair element")
     }
 
     // Detect market type (Spot vs Perpetuals)
     const spotElement = document.querySelector(
       'div[style*="background: rgb(7, 39, 35)"] .sc-bjfHbI.jxtURp.body12Regular',
     )
-    console.log("🔍 Spot detection element:", spotElement)
+    console.log("Spot detection element:", spotElement)
     const newMarket = spotElement && spotElement.textContent.includes("Spot") ? "Spot" : "Perps"
-    console.log(`🔍 Detected market type: "${newMarket}"`)
+    console.log(`Detected market type: "${newMarket}"`)
     
     if (newMarket !== this.currentMarket) {
-      console.log(`📊 Market type changed: "${this.currentMarket}" -> "${newMarket}"`)
+      console.log(`Market type changed: "${this.currentMarket}" -> "${newMarket}"`)
       this.currentMarket = newMarket
     }
 
     const roomId = `${this.currentPair}_${this.currentMarket}`
-    console.log(`🏠 Current room ID: "${roomId}"`)
+    console.log(`Current room ID: "${roomId}"`)
     
     // Fallback if no pair detected
     if (!this.currentPair) {
@@ -259,7 +259,7 @@ class HyperliquidChat {
           ${!isConnected ? `
           <div class="hl-chat-auth-bar" id="chatAuthBar">
             <div class="hl-auth-message">
-              <span>💰 Connect wallet to send messages</span>
+              <span>Connect wallet to send messages</span>
               <button class="hl-connect-btn-small" id="connectWallet">Connect</button>
             </div>
           </div>
@@ -292,16 +292,16 @@ class HyperliquidChat {
   }
 
   renderMessages() {
-    console.log(`🔍 Rendering ${this.messages.length} messages`)
+    console.log(`Rendering ${this.messages.length} messages`)
     
     if (this.messages.length === 0) {
-      console.log("ℹ️ No messages to render")
+      console.log("No messages to render")
       return ""
     }
     
     const rendered = this.messages
       .map((msg, index) => {
-        console.log(`🔍 Rendering message ${index + 1}:`, { content: msg.content, address: msg.address })
+        console.log(`Rendering message ${index + 1}:`, { content: msg.content, address: msg.address })
         
         const isOwn = msg.address === this.walletAddress
         const displayName = msg.name ? msg.name : this.formatAddress(msg.address)
@@ -567,8 +567,8 @@ class HyperliquidChat {
 
   async loadChatHistoryFromSupabase() {
     const roomId = `${this.currentPair}_${this.currentMarket}`
-    console.log(`🔍 Loading chat history for room: "${roomId}"`)
-    console.log(`🔍 Current pair: "${this.currentPair}", market: "${this.currentMarket}"`)
+    console.log(`Loading chat history for room: "${roomId}"`)
+    console.log(`Current pair: "${this.currentPair}", market: "${this.currentMarket}"`)
     
     // Make sure we have a valid room ID
     if (!this.currentPair || this.currentPair === "UNKNOWN") {
@@ -585,8 +585,8 @@ class HyperliquidChat {
     console.log("✅ Supabase client is initialized")
     
     try {
-      console.log(`🔍 Querying Supabase for room: "${roomId}"`)
-      console.log(`🔍 Query: SELECT * FROM messages WHERE room = '${roomId}' ORDER BY timestamp ASC`)
+      console.log(`Querying Supabase for room: "${roomId}"`)
+      console.log(`Query: SELECT * FROM messages WHERE room = '${roomId}' ORDER BY timestamp ASC`)
       
       const { data, error } = await this.supabase
         .from('messages')
@@ -594,7 +594,7 @@ class HyperliquidChat {
         .eq('room', roomId)
         .order('timestamp', { ascending: true })
 
-      console.log('🔍 Supabase response:', { data, error })
+      console.log('Supabase response:', { data, error })
 
       if (error) {
         console.error('❌ Supabase load error:', error)
@@ -616,8 +616,8 @@ class HyperliquidChat {
       console.log(`✅ Query successful! Found ${data ? data.length : 0} messages for room "${roomId}"`)
       
       if (data && data.length > 0) {
-        console.log('🔍 First message sample:', data[0])
-        console.log('🔍 All message contents:', data.map(m => ({ content: m.content, timestamp: m.timestamp })))
+        console.log('First message sample:', data[0])
+        console.log('All message contents:', data.map(m => ({ content: m.content, timestamp: m.timestamp })))
       } else {
         console.log('ℹ️ No messages found for this room')
       }
@@ -628,23 +628,23 @@ class HyperliquidChat {
       
       // Update the UI
       const messagesContainer = document.getElementById("chatMessages")
-      console.log('🔍 Messages container element:', messagesContainer)
+      console.log('Messages container element:', messagesContainer)
       
       if (messagesContainer) {
         if (this.messages.length === 0) {
           const noMessagesHTML = `<div class="hl-loading">No messages yet in ${roomId}. Be the first to chat!</div>`
-          console.log('🔍 Setting no messages HTML:', noMessagesHTML)
+          console.log('Setting no messages HTML:', noMessagesHTML)
           messagesContainer.innerHTML = noMessagesHTML
         } else {
           const renderedHTML = this.renderMessages()
-          console.log('🔍 Rendered messages HTML:', renderedHTML)
+          console.log('Rendered messages HTML:', renderedHTML)
           messagesContainer.innerHTML = renderedHTML
           this.scrollToBottom()
           console.log('✅ Updated chat UI with messages and scrolled to bottom')
         }
       } else {
         console.error("❌ Messages container not found in DOM!")
-        console.log('🔍 Available elements with IDs:', Array.from(document.querySelectorAll('[id]')).map(el => el.id))
+        console.log('Available elements with IDs:', Array.from(document.querySelectorAll('[id]')).map(el => el.id))
       }
       
     } catch (err) {
@@ -683,7 +683,13 @@ class HyperliquidChat {
 
   async sendMessage() {
     const input = document.getElementById("messageInput")
-    const content = input.value.trim()
+    let content = input.value.trim()
+
+    if (content.length > 500) {
+      content = content.substring(0, 500)
+      // Optionally alert the user that the message was truncated
+      console.warn('Message truncated to 500 characters')
+    }
 
     if (!content || !this.walletAddress) return
     
@@ -1012,4 +1018,9 @@ if (document.readyState === "loading") {
   })
 } else {
   initializeSupabase()
+}
+
+// Export for testing purposes
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { HyperliquidChat };
 }

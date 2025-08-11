@@ -3,60 +3,33 @@
  */
 
 describe('HyperliquidChat - Module A: Market detection', () => {
-  let HyperliquidChat;
-
+  let chat;
+  
+  // At the top of __tests__/content.test.js
+  const { HyperliquidChat } = require('../content.js');
+  
   beforeEach(() => {
     // Reset DOM
     document.body.innerHTML = '';
-
-    // Import the HyperliquidChat class from content.js
-    // In a real implementation, we would import the class directly
-    // For now, we'll recreate a minimal version for testing
-    HyperliquidChat = class {
-      constructor() {
-        this.currentPair = '';
-        this.currentMarket = '';
-      }
-
-      detectMarketInfo() {
-        // Allow override when running in standalone tab
-        if (window.CHAT_PAIR_OVERRIDE) {
-          this.currentPair = window.CHAT_PAIR_OVERRIDE;
-          this.currentMarket = window.CHAT_MARKET_OVERRIDE || 'Perps';
-          return;
-        }
-
-        // Detect trading pair using the specific coinInfo selector
-        let pairElement = document.querySelector("#coinInfo > div > div:nth-child(2) > div:nth-child(1) > div > div > div > div:nth-child(2) > div");
-
-        // Fallback selectors if the primary one fails
-        if (!pairElement || !pairElement.textContent.trim()) {
-          pairElement = document.querySelector(".sc-bjfHbI.bFBYgR") ||
-                       document.querySelector("[data-testid='trading-pair']") || 
-                       document.querySelector(".trading-pair") ||
-                       document.querySelector("h1"); // fallback to main heading
-        }
-
-        if (pairElement) {
-          const newPair = pairElement.textContent.trim();
-          if (newPair && newPair !== this.currentPair) {
-            this.currentPair = newPair;
-          }
-        } else {
-          this.currentPair = "UNKNOWN";
-        }
-
-        // Detect market type (Spot vs Perpetuals)
-        const spotElement = document.querySelector(
-          'div[style*="background: rgb(7, 39, 35)"] .sc-bjfHbI.jxtURp.body12Regular',
-        );
-        const newMarket = spotElement && spotElement.textContent.includes("Spot") ? "Spot" : "Perps";
-
-        if (newMarket !== this.currentMarket) {
-          this.currentMarket = newMarket;
-        }
-      }
-    };
+    
+    // Mock the Supabase dynamic import before instantiating the class
+    const { import: dynamicImport } = require('module');
+    dynamicImport.mockResolvedValue({
+      createClient: () => ({
+        from: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        order: jest.fn().mockResolvedValue({ data: [], error: null }),
+        channel: jest.fn().mockReturnValue({
+          on: jest.fn().mockReturnThis(),
+          subscribe: jest.fn().mockReturnThis()
+        }),
+        removeChannel: jest.fn()
+      })
+    });
+    
+    // Now instantiate the REAL class
+    chat = new HyperliquidChat();
   });
 
   test('A1: Primary selector present - should detect pair and set market to Perps', () => {
@@ -68,24 +41,22 @@ describe('HyperliquidChat - Module A: Market detection', () => {
   test('A2: Fallback selector used - should detect pair from fallback', () => {
     // Create fallback element with pair text
     const fallbackElement = document.createElement('div');
-    fallbackElement.className = 'trading-pair';
+    fallbackElement.className = 'sc-bjfHbI bFBYgR';
     fallbackElement.textContent = 'BTC-USDC';
     document.body.appendChild(fallbackElement);
-
-    // Create instance and run detection
-    const chat = new HyperliquidChat();
+    
+    // Run detection with the real class instance
     chat.detectMarketInfo();
-
+    
     // Assert
     expect(chat.currentPair).toBe('BTC-USDC');
     expect(chat.currentMarket).toBe('Perps');
   });
 
   test('A3: No selector found - should set pair to UNKNOWN', () => {
-    // Create instance and run detection with no elements in DOM
-    const chat = new HyperliquidChat();
+    // Run detection with the real class instance and no elements in DOM
     chat.detectMarketInfo();
-
+    
     // Assert
     expect(chat.currentPair).toBe('UNKNOWN');
     expect(chat.currentMarket).toBe('Perps'); // Default market
@@ -109,10 +80,9 @@ describe('HyperliquidChat - Module A: Market detection', () => {
     spotParent.appendChild(spotElement);
     document.body.appendChild(spotParent);
 
-    // Create instance and run detection
-    const chat = new HyperliquidChat();
+    // Run detection with the real class instance
     chat.detectMarketInfo();
-
+    
     // Assert
     expect(chat.currentPair).toBe('SOL-USDC');
     expect(chat.currentMarket).toBe('Spot');
@@ -123,10 +93,9 @@ describe('HyperliquidChat - Module A: Market detection', () => {
     window.CHAT_PAIR_OVERRIDE = 'OVERRIDE-PAIR';
     window.CHAT_MARKET_OVERRIDE = 'Spot';
 
-    // Create instance and run detection
-    const chat = new HyperliquidChat();
+    // Run detection with the real class instance
     chat.detectMarketInfo();
-
+    
     // Assert
     expect(chat.currentPair).toBe('OVERRIDE-PAIR');
     expect(chat.currentMarket).toBe('Spot');
@@ -138,130 +107,46 @@ describe('HyperliquidChat - Module A: Market detection', () => {
 });
 
 describe('HyperliquidChat - Module B: HTML building and rendering', () => {
-  let HyperliquidChat;
-
+  let chat;
+  
+  // Import the real HyperliquidChat class
+  const { HyperliquidChat } = require('../content.js');
+  
   beforeEach(() => {
     // Reset DOM
     document.body.innerHTML = '';
-
-    // Create a minimal version of HyperliquidChat for testing
-    HyperliquidChat = class {
-      constructor() {
-        this.isVisible = false;
-        this.currentPair = 'ETH-USDC';
-        this.currentMarket = 'Perps';
-        this.walletAddress = '';
-        this.messages = [];
-        this.autoScroll = true;
-        this.availableNames = [];
-        this.selectedName = '';
-      }
-
-      getChatHTML() {
-        const roomId = `${this.currentPair}_${this.currentMarket}`;
-        const isConnected = !!this.walletAddress;
-
-        return `
-          <div class="hl-chat-container ${this.isVisible ? "visible" : ""}">
-            <div class="hl-chat-header">
-              <div class="hl-chat-title">
-                <span class="hl-chat-pair">${this.currentPair}</span>
-                <span class="hl-chat-market">${this.currentMarket} Chat</span>
-              </div>
-              <div class="hl-chat-autoscroll">
-                <input type="checkbox" id="autoScrollCheckbox" ${this.autoScroll ? "checked" : ""}>
-                <label for="autoScrollCheckbox">Auto-scroll</label>
-              </div>
-              <div class="hl-chat-controls">
-                ${window.IS_STANDALONE_CHAT ? `<button class="hl-chat-popin" id="popInChat" title="Return to page">⇦</button>` : `<button class="hl-chat-popout" id="popOutChat" title="Open in new tab">↗</button>`}
-                <button class="hl-chat-close" id="closeChat">×</button>
-              </div>
-            </div>
-
-            <div class="hl-chat-content">
-              <div class="hl-chat-messages" id="chatMessages">
-                ${this.renderMessages()}
-              </div>
-
-              ${!isConnected ? `
-              <div class="hl-chat-auth-bar" id="chatAuthBar">
-                <div class="hl-auth-message">
-                  <span>Connect wallet to send messages</span>
-                  <button class="hl-connect-btn-small" id="connectWallet">Connect</button>
-                </div>
-              </div>
-              ` : `
-              <div class="hl-name-bar">
-                <label class="hl-name-label">As:</label>
-                <select id="hlNameSelect" class="hl-name-select-input">
-                  <option value="" ${this.selectedName === '' ? 'selected' : ''}>${this.formatAddress(this.walletAddress)}</option>
-                  ${this.availableNames.map(n => `<option value="${n}" ${n === this.selectedName ? 'selected' : ''}>${n}</option>`).join('')}
-                </select>
-              </div>
-              <div class="hl-chat-input-container">
-                <input
-                  type="text" 
-                  class="hl-chat-input" 
-                  id="messageInput" 
-                  placeholder="Chat with ${roomId} traders..."
-                  maxlength="500"
-                />
-                <button class="hl-send-btn" id="sendMessage">Send</button>
-              </div>
-              `}
-            </div>
-
-            <div class="hl-chat-toggle" id="chatToggle">
-              <span>💬</span>
-            </div>
-          </div>
-        `;
-      }
-
-      renderMessages() {
-        if (this.messages.length === 0) {
-          return "";
-        }
-
-        return this.messages
-          .map((msg) => {
-            const isOwn = msg.address === this.walletAddress;
-            const displayName = msg.name ? msg.name : this.formatAddress(msg.address);
-            return `
-          <div class="hl-message ${isOwn ? "own" : ""}">
-            <div class="hl-message-header">
-              <span class="hl-message-address">${displayName}</span>
-              <span class="hl-message-time">${this.formatTime(msg.timestamp)}</span>
-            </div>
-            <div class="hl-message-content">${this.escapeHtml(msg.content)}</div>
-          </div>
-        `;
-          })
-          .join("");
-      }
-
-      formatAddress(address) {
-        return `${address.slice(0, 6)}...${address.slice(-4)}`;
-      }
-
-      formatTime(timestamp) {
-        return new Date(timestamp).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-      }
-
-      escapeHtml(text) {
-        const div = document.createElement("div");
-        div.textContent = text;
-        return div.innerHTML;
-      }
-    };
+    
+    // Mock the Supabase dynamic import
+    const { import: dynamicImport } = require('module');
+    dynamicImport.mockResolvedValue({
+      createClient: () => ({
+        from: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        order: jest.fn().mockResolvedValue({ data: [], error: null }),
+        channel: jest.fn().mockReturnValue({
+          on: jest.fn().mockReturnThis(),
+          subscribe: jest.fn().mockReturnThis()
+        }),
+        removeChannel: jest.fn()
+      })
+    });
+    
+    // Create instance of the real class with test values
+    chat = new HyperliquidChat();
+    chat.isVisible = false;
+    chat.currentPair = 'ETH-USDC';
+    chat.currentMarket = 'Perps';
+    chat.walletAddress = '';
+    chat.messages = [];
+    chat.autoScroll = true;
+    chat.availableNames = [];
+    chat.selectedName = '';
   });
 
   test('B1: Disconnected state - should show connect button and no input area', () => {
-    const chat = new HyperliquidChat();
-    chat.walletAddress = ''; // Ensure disconnected state
+    // Ensure disconnected state
+    chat.walletAddress = '';
 
     // Get HTML and add to DOM for testing
     const html = chat.getChatHTML();
@@ -274,7 +159,7 @@ describe('HyperliquidChat - Module B: HTML building and rendering', () => {
   });
 
   test('B2: Connected state - should show name select and chat input', () => {
-    const chat = new HyperliquidChat();
+    // Set connected state
     chat.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
     chat.availableNames = ['crypto_trader', 'moon_boy'];
 
@@ -290,7 +175,7 @@ describe('HyperliquidChat - Module B: HTML building and rendering', () => {
   });
 
   test('B3: No messages - renderMessages should return empty string', () => {
-    const chat = new HyperliquidChat();
+    // Set empty messages
     chat.messages = [];
 
     // Assert
@@ -298,7 +183,7 @@ describe('HyperliquidChat - Module B: HTML building and rendering', () => {
   });
 
   test('B4: Own vs other messages - should apply .own class only to own messages', () => {
-    const chat = new HyperliquidChat();
+    // Set wallet address and messages
     chat.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
     chat.messages = [
       {
@@ -325,7 +210,7 @@ describe('HyperliquidChat - Module B: HTML building and rendering', () => {
   });
 
   test('B5: HTML escaping - should escape script tags in content', () => {
-    const chat = new HyperliquidChat();
+    // Set messages with potentially dangerous content
     chat.messages = [
       {
         address: '0x1234567890abcdef1234567890abcdef12345678',
@@ -1119,9 +1004,12 @@ describe('HyperliquidChat - Module G: Realtime subscription', () => {
 });
 
 describe('HyperliquidChat - Module H: Sending messages', () => {
-  let HyperliquidChat;
+  let chat;
   let mockFetch;
   let alertSpy;
+  
+  // Import the real HyperliquidChat class
+  const { HyperliquidChat } = require('../content.js');
 
   beforeEach(() => {
     // Reset DOM
@@ -1143,136 +1031,42 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
 
     // Mock alert
     alertSpy = jest.spyOn(window, 'alert').mockImplementation(() => {});
-
-    // Create a minimal version of HyperliquidChat for testing
-    HyperliquidChat = class {
-      constructor() {
-        this.currentPair = 'ETH-USDC';
-        this.currentMarket = 'Perps';
-        this.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
-        this.selectedName = '';
-        this.messages = [];
-        this.jwtToken = 'mock-jwt-token';
-        this.realtimeChannel = {
-          send: jest.fn()
-        };
-      }
-
-      async signMessage(message) {
-        // Mock implementation that returns a signature
-        return 'mock-signature-' + message.substring(0, 10);
-      }
-
-      scrollToBottom() {
-        // Mock implementation
-      }
-
-      renderMessages() {
-        return `<div class="rendered-messages">${this.messages.length} messages</div>`;
-      }
-
-      async sendMessage() {
-        const input = document.getElementById("messageInput");
-        const content = input.value.trim();
-
-        if (!content || !this.walletAddress) return;
-
-        // Ensure we have a JWT token
-        if (!this.jwtToken) {
-          alert('Please reconnect your wallet to send messages');
-          return;
-        }
-
-        const timestamp = Date.now();
-        const nonce = timestamp + Math.random().toString(36).substr(2, 9); // unique nonce
-        const messageObj = {
-          address: this.walletAddress,
-          name: this.selectedName,
-          content: content,
-          timestamp: timestamp,
-          pair: this.currentPair,
-          market: this.currentMarket,
-          room: `${this.currentPair}_${this.currentMarket}`,
-          nonce: nonce
-        };
-
-        const messageString = JSON.stringify(messageObj);
-
-        try {
-          // Sign the message string
-          const signature = await this.signMessage(messageString);
-
-          // Optimistic UI - show message immediately
-          this.messages.push({
-            address: this.walletAddress,
-            name: this.selectedName,
-            content: content,
-            timestamp: timestamp,
-            pair: this.currentPair,
-            market: this.currentMarket,
-            room: messageObj.room
-          });
-          input.value = "";
-          document.getElementById("chatMessages").innerHTML = this.renderMessages();
-          this.scrollToBottom();
-
-          // Send to backend
-          const response = await fetch('http://localhost:3001/message', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${this.jwtToken}`
-            },
-            body: JSON.stringify({
-              signature: signature,
-              message: messageString
-            })
-          });
-
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || `Server error: ${response.status}`);
-          }
-
-          // Broadcast to other clients for realtime update
-          if (this.realtimeChannel) {
-            this.realtimeChannel.send({
-              type: 'broadcast',
-              event: 'new-message',
-              payload: {
-                address: this.walletAddress,
-                name: this.selectedName,
-                content: content,
-                timestamp: timestamp,
-                pair: this.currentPair,
-                market: this.currentMarket,
-                room: messageObj.room
-              }
-            });
-          }
-
-        } catch (error) {
-          // Remove optimistic message on error
-          this.messages = this.messages.filter(msg =>
-            !(msg.timestamp === timestamp && msg.address === this.walletAddress)
-          );
-          document.getElementById("chatMessages").innerHTML = this.renderMessages();
-          this.scrollToBottom();
-
-          // Show user-friendly error messages
-          let errorMessage = error.message;
-          if (errorMessage.includes('rate limit')) {
-            errorMessage = 'Too many messages! Please wait a moment before sending again.';
-          } else if (errorMessage.includes('stale timestamp')) {
-            errorMessage = 'Message expired. Please try again.';
-          } else if (errorMessage.includes('signature mismatch')) {
-            errorMessage = 'Signature verification failed. Please reconnect your wallet.';
-          }
-
-          alert(`Failed to send message: ${errorMessage}`);
-        }
-      }
+    
+    // Mock the Supabase dynamic import
+    const { import: dynamicImport } = require('module');
+    dynamicImport.mockResolvedValue({
+      createClient: () => ({
+        from: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        order: jest.fn().mockResolvedValue({ data: [], error: null }),
+        channel: jest.fn().mockReturnValue({
+          on: jest.fn().mockReturnThis(),
+          subscribe: jest.fn().mockReturnThis()
+        }),
+        removeChannel: jest.fn()
+      })
+    });
+    
+    // Create instance of the real class with test values
+    chat = new HyperliquidChat();
+    chat.currentPair = 'ETH-USDC';
+    chat.currentMarket = 'Perps';
+    chat.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
+    chat.selectedName = '';
+    chat.messages = [];
+    chat.jwtToken = 'mock-jwt-token';
+    chat.realtimeChannel = {
+      send: jest.fn()
     };
+    
+    // Mock signMessage to avoid actual wallet interaction
+    chat.signMessage = jest.fn().mockImplementation(async (message) => {
+      return 'mock-signature-' + message.substring(0, 10);
+    });
+    
+    // Mock renderMessages for simpler testing
+    chat.renderMessages = jest.fn().mockReturnValue(`<div class="rendered-messages">${chat.messages.length} messages</div>`);
   });
 
   afterEach(() => {
@@ -1280,11 +1074,6 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
   });
 
   test('H1: Guards - empty input should not send message', async () => {
-    const chat = new HyperliquidChat();
-
-    // Create spy for signMessage
-    const signMessageSpy = jest.spyOn(chat, 'signMessage');
-
     // Set empty input
     const input = document.getElementById('messageInput');
     input.value = '';
@@ -1293,16 +1082,13 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
     await chat.sendMessage();
 
     // Assert
-    expect(signMessageSpy).not.toHaveBeenCalled();
+    expect(chat.signMessage).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
   test('H2: Guards - missing JWT token should show alert', async () => {
-    const chat = new HyperliquidChat();
+    // Set JWT token to null
     chat.jwtToken = null;
-
-    // Create spy for signMessage
-    const signMessageSpy = jest.spyOn(chat, 'signMessage');
 
     // Set input value
     const input = document.getElementById('messageInput');
@@ -1313,15 +1099,12 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
 
     // Assert
     expect(alertSpy).toHaveBeenCalledWith('Please reconnect your wallet to send messages');
-    expect(signMessageSpy).not.toHaveBeenCalled();
+    expect(chat.signMessage).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
   test('H3: Successful path - should sign, send, and broadcast message', async () => {
-    const chat = new HyperliquidChat();
-
-    // Create spies
-    const signMessageSpy = jest.spyOn(chat, 'signMessage');
+    // Create spy for scrollToBottom
     const scrollToBottomSpy = jest.spyOn(chat, 'scrollToBottom');
 
     // Mock successful fetch response
@@ -1338,7 +1121,7 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
     await chat.sendMessage();
 
     // Assert
-    expect(signMessageSpy).toHaveBeenCalled();
+    expect(chat.signMessage).toHaveBeenCalled();
     expect(mockFetch).toHaveBeenCalledWith(
       'http://localhost:3001/message',
       expect.objectContaining({
@@ -1367,13 +1150,11 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
     );
   });
 
-  test('H4: Error path - should remove optimistic message and show alert', async () => {
-    const chat = new HyperliquidChat();
-
-    // Create spies
+  test('H4: Error path - rate limit should show specific alert', async () => {
+    // Create spy for scrollToBottom
     const scrollToBottomSpy = jest.spyOn(chat, 'scrollToBottom');
 
-    // Mock failed fetch response
+    // Mock failed fetch response with rate limit error
     mockFetch.mockResolvedValueOnce({
       ok: false,
       json: async () => ({ error: 'rate limit exceeded' })
@@ -1398,9 +1179,91 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
       'Failed to send message: Too many messages! Please wait a moment before sending again.'
     );
   });
+  
+  test('H5: Error path - stale timestamp should show specific alert', async () => {
+    // Setup
+    document.getElementById('messageInput').value = 'A valid message';
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: 'stale timestamp' }),
+    });
 
-  test('H5: Payload composition - should include all required fields', async () => {
-    const chat = new HyperliquidChat();
+    // Execute
+    await chat.sendMessage();
+
+    // Assert
+    expect(chat.messages.length).toBe(0); // Optimistic message removed
+    expect(alertSpy).toHaveBeenCalledWith('Failed to send message: Message expired. Please try again.');
+  });
+
+  test('H6: Error path - signature mismatch should show specific alert', async () => {
+    // Setup
+    document.getElementById('messageInput').value = 'A valid message';
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: 'signature mismatch' }),
+    });
+
+    // Execute
+    await chat.sendMessage();
+
+    // Assert
+    expect(alertSpy).toHaveBeenCalledWith('Failed to send message: Signature verification failed. Please reconnect your wallet.');
+  });
+
+  test('H7: Error path - unhandled server error shows generic message', async () => {
+    // Setup
+    document.getElementById('messageInput').value = 'A valid message';
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: 'internal server error' }),
+    });
+  
+    // Execute
+    await chat.sendMessage();
+  
+    // Assert
+    expect(alertSpy).toHaveBeenCalledWith('Failed to send message: internal server error');
+  });
+
+  test('H8: Input validation - should truncate messages over 500 characters', async () => {
+    // Setup
+    // Mock successful fetch response
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ success: true })
+    });
+    
+    // Create a long message (600 characters)
+    const longMessage = 'a'.repeat(600);
+    document.getElementById('messageInput').value = longMessage;
+    
+    // Spy on console.warn for truncation message
+    const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    
+    // Execute
+    await chat.sendMessage();
+    
+    // Assert
+    expect(mockFetch).toHaveBeenCalled();
+    
+    // Check the 'content' field in the message payload sent to the backend
+    const fetchCallBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const messageObj = JSON.parse(fetchCallBody.message);
+    
+    expect(messageObj.content.length).toBe(500);
+    expect(messageObj.content).toBe('a'.repeat(500));
+    expect(consoleWarnSpy).toHaveBeenCalledWith('Message truncated to 500 characters');
+    
+    // Restore console.warn
+    consoleWarnSpy.mockRestore();
+  });
+
+  test('H9: Payload composition - should include all required fields', async () => {
+    // Setup
     chat.selectedName = 'crypto_trader';
 
     // Mock Date.now to get consistent timestamp
@@ -1419,7 +1282,7 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
 
     // Create spy for signMessage to capture the message
     let capturedMessage;
-    jest.spyOn(chat, 'signMessage').mockImplementation(async (message) => {
+    chat.signMessage.mockImplementation(async (message) => {
       capturedMessage = message;
       return 'mock-signature';
     });
@@ -1688,6 +1551,84 @@ describe('HyperliquidChat - Module I: Market monitoring', () => {
     expect(pairElement.textContent).toBe('SOL-USDC');
     expect(marketElement.textContent).toBe('Spot Chat');
     expect(inputElement.placeholder).toBe('Chat with SOL-USDC_Spot traders...');
+  });
+});
+
+describe('HyperliquidChat - Module M: Wallet Connection', () => {
+  let chat;
+  let mockFetch;
+
+  // Import the real HyperliquidChat class
+  const { HyperliquidChat } = require('../content.js');
+
+  beforeEach(() => {
+    // Reset DOM
+    document.body.innerHTML = '';
+
+    // Create auth bar for UI update
+    const authBar = document.createElement('div');
+    authBar.id = 'chatAuthBar';
+    document.body.appendChild(authBar);
+
+    // Mock fetch
+    mockFetch = jest.fn();
+    global.fetch = mockFetch;
+
+    // Mock alert
+    jest.spyOn(window, 'alert').mockImplementation(() => {});
+    
+    // Mock the Supabase dynamic import
+    const { import: dynamicImport } = require('module');
+    dynamicImport.mockResolvedValue({
+      createClient: () => ({
+        from: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        order: jest.fn().mockResolvedValue({ data: [], error: null }),
+        channel: jest.fn().mockReturnValue({
+          on: jest.fn().mockReturnThis(),
+          subscribe: jest.fn().mockReturnThis()
+        }),
+        removeChannel: jest.fn()
+      })
+    });
+    
+    // Create instance of the real class
+    chat = new HyperliquidChat();
+    chat.createChatWidget = jest.fn(); // Mock createChatWidget to avoid DOM manipulation
+    
+    // Mock updateAuthUI to check its calls
+    chat.updateAuthUI = jest.fn();
+  });
+
+  test('M1: connectWallet should handle user rejecting connection request', async () => {
+    // Mock the requestAccounts to reject the request
+    jest.spyOn(chat, 'requestAccounts').mockRejectedValue(new Error('User rejected request'));
+
+    await chat.connectWallet();
+
+    expect(chat.walletAddress).toBe('');
+    expect(chat.jwtToken).toBe(null); // Initial value
+    expect(chat.updateAuthUI).not.toHaveBeenCalled(); // UI remains in disconnected state
+    expect(window.alert).toHaveBeenCalledWith('User rejected request');
+  });
+  
+  test('M2: handleBackendAuth should handle failed fetch to /auth', async () => {
+    // Mock a successful wallet connection but a failed backend auth
+    jest.spyOn(chat, 'requestAccounts').mockResolvedValue(['0x123abc']);
+    jest.spyOn(chat, 'signMessage').mockResolvedValue('mock-signature');
+    
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ error: 'Authentication failed' })
+    });
+
+    await chat.connectWallet();
+    
+    expect(chat.walletAddress).toBe('0x123abc'); // Address is set before auth
+    expect(chat.jwtToken).toBe(null); // JWT is NOT set
+    expect(window.alert).toHaveBeenCalledWith('Authentication failed');
   });
 });
 

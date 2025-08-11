@@ -1,7 +1,11 @@
+// Mock TextEncoder and TextDecoder for JSDOM
+global.TextEncoder = require('util').TextEncoder;
+global.TextDecoder = require('util').TextDecoder;
+
 // Mock global objects needed for tests
 global.chrome = {
   runtime: {
-    getURL: jest.fn().mockImplementation(path => `chrome-extension://mock-id/${path}`),
+    getURL: jest.fn((path) => `http://localhost/mock-extension/${path}`),
     onMessage: {
       addListener: jest.fn(),
     },
@@ -67,3 +71,14 @@ global.simulateMessageEvent = (data) => {
 
   messageHandlers.forEach(handler => handler(messageEvent));
 };
+
+// Mock dynamic imports
+jest.mock('module', () => ({
+  ...jest.requireActual('module'),
+  import: jest.fn().mockImplementation((path) => {
+    if (path.includes('supabase.js')) {
+      return Promise.resolve(require('./__mocks__/supabase.js'));
+    }
+    return Promise.reject(new Error(`Module not mocked: ${path}`));
+  }),
+}));
