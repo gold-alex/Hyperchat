@@ -405,35 +405,31 @@ describe('HyperliquidChat - Module D: Drag behavior', () => {
     chat = new HyperliquidChat();
   });
 
-  test('D1: Mouse drag simulation - should set cursor style and attach event listeners', () => {
-    // Create widget and handle elements
+  test('D1: enableDrag should set cursor style and attach mousedown event listener', () => {
+    // Create the necessary DOM elements for the test
     const widget = document.createElement('div');
     widget.id = 'widget';
     widget.style.position = 'absolute';
     widget.style.left = '100px';
     widget.style.top = '100px';
-
+    
     const handle = document.createElement('div');
     handle.id = 'handle';
     widget.appendChild(handle);
-
     document.body.appendChild(widget);
+    
+    // Spy on the handle's addEventListener method
+    const addEventListenerSpy = jest.spyOn(handle, 'addEventListener');
 
-    // Mock addEventListener to verify event listeners are attached
-    const originalAddEventListener = handle.addEventListener;
-    const addEventListenerMock = jest.fn();
-    handle.addEventListener = addEventListenerMock;
-
+    // Call the REAL method from the class instance
     chat.enableDrag(widget, handle);
 
-    // Verify cursor style
+    // Assert the effects
     expect(handle.style.cursor).toBe('move');
-
-    // Verify mousedown event listener was attached
-    expect(addEventListenerMock).toHaveBeenCalledWith('mousedown', expect.any(Function));
-
-    // Restore original addEventListener
-    handle.addEventListener = originalAddEventListener;
+    expect(addEventListenerSpy).toHaveBeenCalledWith('mousedown', expect.any(Function));
+    
+    // Clean up
+    addEventListenerSpy.mockRestore();
   });
 });
 
@@ -1551,235 +1547,59 @@ describe('HyperliquidChat - Module J: Header and visibility helpers', () => {
   });
 });
 
-// N.B.: Module K tests are skipped as they were testing internal implementation details
-// that may have changed in the real HyperliquidChat class. The functionality is still tested
-// through the Module M: Wallet Connection tests.
-describe.skip('HyperliquidChat - Module K: Wallet bridge wrappers', () => {
+describe('HyperliquidChat - Module K: Wallet bridge wrappers', () => {
   let chat;
 
   beforeEach(() => {
     // Reset DOM
-    document.body.innerHTML = '';
-
+    setupWidgetDOM();
+    
     // Mock window.postMessage
     window.postMessage = jest.fn();
 
     // Create a real instance of HyperliquidChat
     chat = new HyperliquidChat();
-
+    
     // Reset wallet state for testing
     chat.walletAddress = null;
-    chat.walletConnected = false;
     chat.jwtToken = null;
   });
 
-  test('K1: setupWalletListeners - should add event listener for wallet messages', () => {
-    // Mock window.addEventListener
-    const originalAddEventListener = window.addEventListener;
-    const addEventListenerMock = jest.fn();
-    window.addEventListener = addEventListenerMock;
-
-    chat.setupWalletListeners();
-
-    expect(addEventListenerMock).toHaveBeenCalledWith('message', expect.any(Function));
-
-    // Restore original method
-    window.addEventListener = originalAddEventListener;
+  afterEach(() => {
+    // Restore all mocks
+    jest.restoreAllMocks();
   });
 
-  test('K2: handleWalletMessage - should process WALLET_CONNECTED event', () => {
-    // Create auth bar for UI update
-    const authBar = document.createElement('div');
-    authBar.id = 'chatAuthBar';
-    document.body.appendChild(authBar);
+  test('K1: requestAccounts - should post a HL_CONNECT_WALLET_REQUEST message', () => {
+    // Call the real method
+    chat.requestAccounts();
 
-    // Create spy for updateAuthUI
-    const updateAuthUISpy = jest.spyOn(chat, 'updateAuthUI');
-
-    // Create wallet connected event
-    const event = {
-      data: {
-        type: 'WALLET_CONNECTED',
-        address: '0x1234567890abcdef1234567890abcdef12345678',
-        token: 'jwt-token-123'
-      }
-    };
-
-    // Process message
-    chat.handleWalletMessage(event);
-
-    // Assert
-    expect(chat.walletConnected).toBe(true);
-    expect(chat.walletAddress).toBe('0x1234567890abcdef1234567890abcdef12345678');
-    expect(chat.jwtToken).toBe('jwt-token-123');
-    expect(updateAuthUISpy).toHaveBeenCalled();
-  });
-
-  test('K3: handleWalletMessage - should process WALLET_DISCONNECTED event', () => {
-    // Set initial state
-    chat.walletConnected = true;
-    chat.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
-    chat.jwtToken = 'jwt-token-123';
-
-    // Create auth bar for UI update
-    const authBar = document.createElement('div');
-    authBar.id = 'chatAuthBar';
-    document.body.appendChild(authBar);
-
-    // Create spy for updateAuthUI
-    const updateAuthUISpy = jest.spyOn(chat, 'updateAuthUI');
-
-    // Create wallet disconnected event
-    const event = {
-      data: {
-        type: 'WALLET_DISCONNECTED'
-      }
-    };
-
-    // Process message
-    chat.handleWalletMessage(event);
-
-    // Assert
-    expect(chat.walletConnected).toBe(false);
-    expect(chat.walletAddress).toBeNull();
-    expect(chat.jwtToken).toBeNull();
-    expect(updateAuthUISpy).toHaveBeenCalled();
-  });
-
-  test('K4: handleWalletMessage - should process SIGN_MESSAGE_RESULT success', () => {
-    // Create spies
-    const sendSignedMessageSpy = jest.spyOn(chat, 'sendSignedMessage');
-
-    // Create sign message success event
-    const event = {
-      data: {
-        type: 'SIGN_MESSAGE_RESULT',
-        success: true,
-        signature: '0xsignature123',
-        messageData: { content: 'Hello world', room: 'ETH-USDC_Perps' }
-      }
-    };
-
-    // Process message
-    chat.handleWalletMessage(event);
-
-    // Assert
-    expect(sendSignedMessageSpy).toHaveBeenCalledWith(
-      '0xsignature123',
-      { content: 'Hello world', room: 'ETH-USDC_Perps' }
-    );
-  });
-
-  test('K5: handleWalletMessage - should process SIGN_MESSAGE_RESULT failure', () => {
-    // Create spies
-    const handleSignatureFailureSpy = jest.spyOn(chat, 'handleSignatureFailure');
-
-    // Create sign message failure event
-    const event = {
-      data: {
-        type: 'SIGN_MESSAGE_RESULT',
-        success: false
-      }
-    };
-
-    // Process message
-    chat.handleWalletMessage(event);
-
-    // Assert
-    expect(handleSignatureFailureSpy).toHaveBeenCalled();
-  });
-
-  test('K6: connectWallet - should post message to request wallet connection', () => {
-    // Call method
-    chat.connectWallet();
-
-    // Assert
+    // Assert that the correct message was posted to the window
     expect(window.postMessage).toHaveBeenCalledWith(
-      { type: 'CONNECT_WALLET_REQUEST' },
+      expect.objectContaining({
+        type: 'HL_CONNECT_WALLET_REQUEST'
+      }),
       '*'
     );
   });
 
-  test('K7: disconnectWallet - should post message and reset wallet state', () => {
-    // Set initial state
-    chat.walletConnected = true;
-    chat.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
-    chat.jwtToken = 'jwt-token-123';
+  test('K2: signMessage - should post a HL_SIGN_REQUEST message with correct payload', () => {
+    // Setup
+    chat.walletAddress = '0x123abc';
+    const messageToSign = 'Hello, Hyperliquid!';
 
-    // Create auth bar for UI update
-    const authBar = document.createElement('div');
-    authBar.id = 'chatAuthBar';
-    document.body.appendChild(authBar);
+    // Call the real method
+    chat.signMessage(messageToSign);
 
-    // Create spy for updateAuthUI
-    const updateAuthUISpy = jest.spyOn(chat, 'updateAuthUI');
-
-    // Call method
-    chat.disconnectWallet();
-
-    // Assert
+    // Assert that the correct message was posted
     expect(window.postMessage).toHaveBeenCalledWith(
-      { type: 'DISCONNECT_WALLET_REQUEST' },
+      expect.objectContaining({
+        type: 'HL_SIGN_REQUEST',
+        message: messageToSign,
+        address: '0x123abc'
+      }),
       '*'
     );
-    expect(chat.walletConnected).toBe(false);
-    expect(chat.walletAddress).toBeNull();
-    expect(chat.jwtToken).toBeNull();
-    expect(updateAuthUISpy).toHaveBeenCalled();
-  });
-
-  test('K8: requestSignature - should post message with data to sign', () => {
-    const message = { content: 'Test message', room: 'BTC-USDC_Perps' };
-
-    // Call method
-    chat.requestSignature(message);
-
-    // Assert
-    expect(window.postMessage).toHaveBeenCalledWith(
-      {
-        type: 'SIGN_MESSAGE_REQUEST',
-        message: message
-      },
-      '*'
-    );
-  });
-
-  test('K9: updateAuthUI - should show connected state with truncated address', () => {
-    const chat = new HyperliquidChat();
-    chat.walletConnected = true;
-    chat.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
-
-    // Create auth bar for UI update
-    const authBar = document.createElement('div');
-    authBar.id = 'chatAuthBar';
-    document.body.appendChild(authBar);
-
-    // Call method
-    chat.updateAuthUI();
-
-    // Assert
-    expect(authBar.querySelector('.hl-wallet-address')).not.toBeNull();
-    const addressText = authBar.querySelector('.hl-wallet-address').textContent;
-    expect(addressText).toBe('0x1234...5678');
-    expect(authBar.querySelector('#displayName')).not.toBeNull();
-  });
-
-  test('K10: updateAuthUI - should show disconnected state with connect button', () => {
-    const chat = new HyperliquidChat();
-    chat.walletConnected = false;
-
-    // Create auth bar for UI update
-    const authBar = document.createElement('div');
-    authBar.id = 'chatAuthBar';
-    document.body.appendChild(authBar);
-
-    // Call method
-    chat.updateAuthUI();
-
-    // Assert
-    expect(authBar.querySelector('.hl-auth-message')).not.toBeNull();
-    expect(authBar.querySelector('#connectWallet')).not.toBeNull();
-    expect(authBar.querySelector('#connectWallet').textContent).toBe('Connect');
   });
 });
 
