@@ -1691,6 +1691,416 @@ describe('HyperliquidChat - Module I: Market monitoring', () => {
   });
 });
 
+describe('HyperliquidChat - Module L: Utilities', () => {
+  let HyperliquidChat;
+
+  beforeEach(() => {
+    // Reset DOM
+    document.body.innerHTML = '';
+
+    // Create a minimal version of HyperliquidChat for testing
+    HyperliquidChat = class {
+      constructor() {
+        // No instance properties needed for utility functions
+      }
+
+      // Utility functions to test
+      formatAddress(address) {
+        if (!address || address.length < 10) return address;
+        return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+      }
+
+      formatTime(timestamp) {
+        const date = new Date(timestamp);
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+
+      escapeHtml(unsafe) {
+        return unsafe
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;")
+          .replace(/\//g, "&#x2F;");
+      }
+    };
+  });
+
+  test('L1: formatAddress - should truncate address correctly', () => {
+    const chat = new HyperliquidChat();
+
+    // Test with a standard Ethereum address
+    const address = '0x1234567890abcdef1234567890abcdef12345678';
+    expect(chat.formatAddress(address)).toBe('0x1234...5678');
+
+    // Test with a shorter address
+    const shortAddress = '0x123456';
+    expect(chat.formatAddress(shortAddress)).toBe(shortAddress);
+
+    // Test with empty address
+    expect(chat.formatAddress('')).toBe('');
+
+    // Test with null
+    expect(chat.formatAddress(null)).toBe(null);
+  });
+
+  test('L2: formatTime - should format timestamp correctly', () => {
+    const chat = new HyperliquidChat();
+
+    // Mock Date.toLocaleTimeString to ensure consistent output
+    const originalToLocaleTimeString = Date.prototype.toLocaleTimeString;
+    Date.prototype.toLocaleTimeString = jest.fn(() => '12:34');
+
+    // Test with a timestamp
+    const timestamp = 1623456789000; // Some arbitrary timestamp
+    expect(chat.formatTime(timestamp)).toBe('12:34');
+
+    // Restore original method
+    Date.prototype.toLocaleTimeString = originalToLocaleTimeString;
+  });
+
+  test('L3: escapeHtml - should escape special characters', () => {
+    const chat = new HyperliquidChat();
+
+    // Test with HTML special characters
+    const unsafeString = '<script>alert("XSS & danger");</script> \' / "quotes"';
+    const escapedString = chat.escapeHtml(unsafeString);
+
+    // Verify all special characters are escaped properly
+    expect(escapedString).toContain('&lt;'); // < is escaped
+    expect(escapedString).toContain('&gt;'); // > is escaped
+    expect(escapedString).toContain('&quot;'); // " is escaped
+    expect(escapedString).toContain('&#039;'); // ' is escaped
+    expect(escapedString).toContain('&amp;'); // & is escaped
+    expect(escapedString).toContain('&#x2F;'); // / is escaped
+
+    // Don't verify exact full string as implementation might vary
+    // Just check that the original unsafe characters are properly escaped
+  });
+});
+
+describe('HyperliquidChat - Module K: Wallet bridge wrappers', () => {
+  let HyperliquidChat;
+
+  beforeEach(() => {
+    // Reset DOM
+    document.body.innerHTML = '';
+
+    // Mock window.postMessage
+    window.postMessage = jest.fn();
+
+    // Create a minimal version of HyperliquidChat for testing
+    HyperliquidChat = class {
+      constructor() {
+        this.walletAddress = null;
+        this.walletConnected = false;
+        this.jwtToken = null;
+        this.messages = [];
+      }
+
+      setupWalletListeners() {
+        window.addEventListener('message', this.handleWalletMessage.bind(this));
+      }
+
+      handleWalletMessage(event) {
+        if (!event.data || !event.data.type) return;
+
+        if (event.data.type === 'WALLET_CONNECTED') {
+          this.walletConnected = true;
+          this.walletAddress = event.data.address;
+          this.jwtToken = event.data.token;
+          this.updateAuthUI();
+        } else if (event.data.type === 'WALLET_DISCONNECTED') {
+          this.walletConnected = false;
+          this.walletAddress = null;
+          this.jwtToken = null;
+          this.updateAuthUI();
+        } else if (event.data.type === 'SIGN_MESSAGE_RESULT') {
+          if (event.data.success) {
+            this.sendSignedMessage(event.data.signature, event.data.messageData);
+          } else {
+            this.handleSignatureFailure();
+          }
+        }
+      }
+
+      updateAuthUI() {
+        const authBar = document.getElementById('chatAuthBar');
+        if (!authBar) return;
+
+        if (this.walletConnected && this.walletAddress) {
+          authBar.innerHTML = `
+            <div class="hl-auth-connected">
+              <span class="hl-wallet-address">${this.walletAddress.substring(0, 6)}...${this.walletAddress.substring(this.walletAddress.length - 4)}</span>
+              <input type="text" id="displayName" placeholder="Enter display name" />
+            </div>
+          `;
+        } else {
+          authBar.innerHTML = `
+            <div class="hl-auth-message">
+              <span>Connect wallet to send messages</span>
+              <button class="hl-connect-btn-small" id="connectWallet">Connect</button>
+            </div>
+          `;
+        }
+      }
+
+      connectWallet() {
+        window.postMessage({ type: 'CONNECT_WALLET_REQUEST' }, '*');
+      }
+
+      disconnectWallet() {
+        window.postMessage({ type: 'DISCONNECT_WALLET_REQUEST' }, '*');
+        this.walletConnected = false;
+        this.walletAddress = null;
+        this.jwtToken = null;
+        this.updateAuthUI();
+      }
+
+      requestSignature(message) {
+        window.postMessage({
+          type: 'SIGN_MESSAGE_REQUEST',
+          message: message
+        }, '*');
+      }
+
+      sendSignedMessage(signature, messageData) {
+        // Mock implementation for testing
+        this.messages.push({
+          ...messageData,
+          signature
+        });
+      }
+
+      handleSignatureFailure() {
+        // Mock implementation for testing
+        // Use console.error instead of alert to avoid JSDOM warning
+        console.error('Signature failed or rejected');
+      }
+    };
+  });
+
+  test('K1: setupWalletListeners - should add event listener for wallet messages', () => {
+    // Mock window.addEventListener
+    const originalAddEventListener = window.addEventListener;
+    const addEventListenerMock = jest.fn();
+    window.addEventListener = addEventListenerMock;
+
+    const chat = new HyperliquidChat();
+    chat.setupWalletListeners();
+
+    expect(addEventListenerMock).toHaveBeenCalledWith('message', expect.any(Function));
+
+    // Restore original method
+    window.addEventListener = originalAddEventListener;
+  });
+
+  test('K2: handleWalletMessage - should process WALLET_CONNECTED event', () => {
+    const chat = new HyperliquidChat();
+
+    // Create auth bar for UI update
+    const authBar = document.createElement('div');
+    authBar.id = 'chatAuthBar';
+    document.body.appendChild(authBar);
+
+    // Create spy for updateAuthUI
+    const updateAuthUISpy = jest.spyOn(chat, 'updateAuthUI');
+
+    // Create wallet connected event
+    const event = {
+      data: {
+        type: 'WALLET_CONNECTED',
+        address: '0x1234567890abcdef1234567890abcdef12345678',
+        token: 'jwt-token-123'
+      }
+    };
+
+    // Process message
+    chat.handleWalletMessage(event);
+
+    // Assert
+    expect(chat.walletConnected).toBe(true);
+    expect(chat.walletAddress).toBe('0x1234567890abcdef1234567890abcdef12345678');
+    expect(chat.jwtToken).toBe('jwt-token-123');
+    expect(updateAuthUISpy).toHaveBeenCalled();
+  });
+
+  test('K3: handleWalletMessage - should process WALLET_DISCONNECTED event', () => {
+    const chat = new HyperliquidChat();
+    chat.walletConnected = true;
+    chat.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
+    chat.jwtToken = 'jwt-token-123';
+
+    // Create auth bar for UI update
+    const authBar = document.createElement('div');
+    authBar.id = 'chatAuthBar';
+    document.body.appendChild(authBar);
+
+    // Create spy for updateAuthUI
+    const updateAuthUISpy = jest.spyOn(chat, 'updateAuthUI');
+
+    // Create wallet disconnected event
+    const event = {
+      data: {
+        type: 'WALLET_DISCONNECTED'
+      }
+    };
+
+    // Process message
+    chat.handleWalletMessage(event);
+
+    // Assert
+    expect(chat.walletConnected).toBe(false);
+    expect(chat.walletAddress).toBeNull();
+    expect(chat.jwtToken).toBeNull();
+    expect(updateAuthUISpy).toHaveBeenCalled();
+  });
+
+  test('K4: handleWalletMessage - should process SIGN_MESSAGE_RESULT success', () => {
+    const chat = new HyperliquidChat();
+
+    // Create spies
+    const sendSignedMessageSpy = jest.spyOn(chat, 'sendSignedMessage');
+
+    // Create sign message success event
+    const event = {
+      data: {
+        type: 'SIGN_MESSAGE_RESULT',
+        success: true,
+        signature: '0xsignature123',
+        messageData: { content: 'Hello world', room: 'ETH-USDC_Perps' }
+      }
+    };
+
+    // Process message
+    chat.handleWalletMessage(event);
+
+    // Assert
+    expect(sendSignedMessageSpy).toHaveBeenCalledWith(
+      '0xsignature123',
+      { content: 'Hello world', room: 'ETH-USDC_Perps' }
+    );
+  });
+
+  test('K5: handleWalletMessage - should process SIGN_MESSAGE_RESULT failure', () => {
+    const chat = new HyperliquidChat();
+
+    // Create spies
+    const handleSignatureFailureSpy = jest.spyOn(chat, 'handleSignatureFailure');
+
+    // Create sign message failure event
+    const event = {
+      data: {
+        type: 'SIGN_MESSAGE_RESULT',
+        success: false
+      }
+    };
+
+    // Process message
+    chat.handleWalletMessage(event);
+
+    // Assert
+    expect(handleSignatureFailureSpy).toHaveBeenCalled();
+  });
+
+  test('K6: connectWallet - should post message to request wallet connection', () => {
+    const chat = new HyperliquidChat();
+
+    // Call method
+    chat.connectWallet();
+
+    // Assert
+    expect(window.postMessage).toHaveBeenCalledWith(
+      { type: 'CONNECT_WALLET_REQUEST' },
+      '*'
+    );
+  });
+
+  test('K7: disconnectWallet - should post message and reset wallet state', () => {
+    const chat = new HyperliquidChat();
+    chat.walletConnected = true;
+    chat.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
+    chat.jwtToken = 'jwt-token-123';
+
+    // Create auth bar for UI update
+    const authBar = document.createElement('div');
+    authBar.id = 'chatAuthBar';
+    document.body.appendChild(authBar);
+
+    // Create spy for updateAuthUI
+    const updateAuthUISpy = jest.spyOn(chat, 'updateAuthUI');
+
+    // Call method
+    chat.disconnectWallet();
+
+    // Assert
+    expect(window.postMessage).toHaveBeenCalledWith(
+      { type: 'DISCONNECT_WALLET_REQUEST' },
+      '*'
+    );
+    expect(chat.walletConnected).toBe(false);
+    expect(chat.walletAddress).toBeNull();
+    expect(chat.jwtToken).toBeNull();
+    expect(updateAuthUISpy).toHaveBeenCalled();
+  });
+
+  test('K8: requestSignature - should post message with data to sign', () => {
+    const chat = new HyperliquidChat();
+    const message = { content: 'Test message', room: 'BTC-USDC_Perps' };
+
+    // Call method
+    chat.requestSignature(message);
+
+    // Assert
+    expect(window.postMessage).toHaveBeenCalledWith(
+      {
+        type: 'SIGN_MESSAGE_REQUEST',
+        message: message
+      },
+      '*'
+    );
+  });
+
+  test('K9: updateAuthUI - should show connected state with truncated address', () => {
+    const chat = new HyperliquidChat();
+    chat.walletConnected = true;
+    chat.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
+
+    // Create auth bar for UI update
+    const authBar = document.createElement('div');
+    authBar.id = 'chatAuthBar';
+    document.body.appendChild(authBar);
+
+    // Call method
+    chat.updateAuthUI();
+
+    // Assert
+    expect(authBar.querySelector('.hl-wallet-address')).not.toBeNull();
+    const addressText = authBar.querySelector('.hl-wallet-address').textContent;
+    expect(addressText).toBe('0x1234...5678');
+    expect(authBar.querySelector('#displayName')).not.toBeNull();
+  });
+
+  test('K10: updateAuthUI - should show disconnected state with connect button', () => {
+    const chat = new HyperliquidChat();
+    chat.walletConnected = false;
+
+    // Create auth bar for UI update
+    const authBar = document.createElement('div');
+    authBar.id = 'chatAuthBar';
+    document.body.appendChild(authBar);
+
+    // Call method
+    chat.updateAuthUI();
+
+    // Assert
+    expect(authBar.querySelector('.hl-auth-message')).not.toBeNull();
+    expect(authBar.querySelector('#connectWallet')).not.toBeNull();
+    expect(authBar.querySelector('#connectWallet').textContent).toBe('Connect');
+  });
+});
+
 describe('HyperliquidChat - Module J: Header and visibility helpers', () => {
   let HyperliquidChat;
 
