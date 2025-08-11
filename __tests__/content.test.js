@@ -708,6 +708,416 @@ describe('HyperliquidChat - Module D: Drag behavior', () => {
   });
 });
 
+describe('HyperliquidChat - Module F: History loading with retry', () => {
+  let HyperliquidChat;
+  let mockSupabase;
+  
+  beforeEach(() => {
+    // Reset DOM
+    document.body.innerHTML = '';
+    
+    // Create messages container
+    const messagesContainer = document.createElement('div');
+    messagesContainer.id = 'chatMessages';
+    document.body.appendChild(messagesContainer);
+    
+    // Mock Supabase client
+    mockSupabase = {
+      from: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      order: jest.fn().mockReturnThis(),
+      removeChannel: jest.fn()
+    };
+    
+    // Create a minimal version of HyperliquidChat for testing
+    HyperliquidChat = class {
+      constructor() {
+        this.currentPair = 'ETH-USDC';
+        this.currentMarket = 'Perps';
+        this.messages = [];
+        this.supabase = null;
+      }
+      
+      async loadChatHistoryWithRetry(maxRetries = 3) {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            await this.loadChatHistoryFromSupabase();
+            return; // Success, exit retry loop
+          } catch (error) {
+            if (attempt === maxRetries) {
+              // Final attempt failed
+              const messagesContainer = document.getElementById("chatMessages");
+              if (messagesContainer) {
+                messagesContainer.innerHTML = `<div class="hl-error">Failed to load chat after ${maxRetries} attempts. <button onclick="location.reload()">Refresh Page</button></div>`;
+              }
+              throw error;
+            }
+            
+            // Wait before retry (exponential backoff)
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+          }
+        }
+      }
+      
+      async loadChatHistoryFromSupabase() {
+        const roomId = `${this.currentPair}_${this.currentMarket}`;
+        
+        // Make sure we have a valid room ID
+        if (!this.currentPair || this.currentPair === "UNKNOWN") {
+          return;
+        }
+    
+        // Check if Supabase is initialized
+        if (!this.supabase) {
+          return;
+        }
+        
+        try {
+          const { data, error } = await this.supabase
+            .from('messages')
+            .select('*')
+            .eq('room', roomId)
+            .order('timestamp', { ascending: true });
+    
+          if (error) {
+            throw error;
+          }
+    
+          // Set messages (even if empty array)
+          this.messages = data || [];
+          
+          // Update the UI
+          const messagesContainer = document.getElementById("chatMessages");
+          
+          if (messagesContainer) {
+            if (this.messages.length === 0) {
+              messagesContainer.innerHTML = `<div class="hl-loading">No messages yet in ${roomId}. Be the first to chat!</div>`;
+            } else {
+              messagesContainer.innerHTML = this.renderMessages();
+              this.scrollToBottom();
+            }
+          }
+          
+        } catch (err) {
+          throw err;
+        }
+      }
+      
+      renderMessages() {
+        return '<div class="rendered-messages"></div>';
+      }
+      
+      scrollToBottom() {
+        // Mock implementation
+      }
+    };
+  });
+  
+  test('F1: Supabase not initialized - should exit gracefully', async () => {
+    const chat = new HyperliquidChat();
+    chat.supabase = null;
+    
+    await chat.loadChatHistoryFromSupabase();
+    
+    // Assert that the function exited gracefully without error
+    const messagesContainer = document.getElementById('chatMessages');
+    expect(messagesContainer.innerHTML).toBe('');
+  });
+  
+  test('F2: Pair unknown - should return early without querying', async () => {
+    const chat = new HyperliquidChat();
+    chat.currentPair = 'UNKNOWN';
+    chat.supabase = mockSupabase;
+    
+    await chat.loadChatHistoryFromSupabase();
+    
+    // Assert that Supabase was not queried
+    expect(mockSupabase.from).not.toHaveBeenCalled();
+  });
+  
+  test('F3: Empty results - should show no messages UI', async () => {
+    const chat = new HyperliquidChat();
+    chat.supabase = mockSupabase;
+    
+    // Mock empty results
+    mockSupabase.order.mockResolvedValueOnce({ data: [], error: null });
+    
+    await chat.loadChatHistoryFromSupabase();
+    
+    // Assert
+    const messagesContainer = document.getElementById('chatMessages');
+    expect(messagesContainer.innerHTML).toContain('No messages yet in ETH-USDC_Perps');
+    expect(chat.messages).toEqual([]);
+  });
+  
+  test('F4: Successful load - should set messages and update UI', async () => {
+    const chat = new HyperliquidChat();
+    chat.supabase = mockSupabase;
+    
+    // Create spy for scrollToBottom
+    const scrollToBottomSpy = jest.spyOn(chat, 'scrollToBottom');
+    
+    // Mock successful results
+    const mockMessages = [
+      { id: 1, content: 'Hello', address: '0x123', timestamp: 1625097600000 },
+      { id: 2, content: 'World', address: '0x456', timestamp: 1625097600001 }
+    ];
+    mockSupabase.order.mockResolvedValueOnce({ data: mockMessages, error: null });
+    
+    await chat.loadChatHistoryFromSupabase();
+    
+    // Assert
+    expect(chat.messages).toEqual(mockMessages);
+    expect(mockSupabase.from).toHaveBeenCalledWith('messages');
+    expect(mockSupabase.eq).toHaveBeenCalledWith('room', 'ETH-USDC_Perps');
+    
+    const messagesContainer = document.getElementById('chatMessages');
+    expect(messagesContainer.innerHTML).toContain('rendered-messages');
+    expect(scrollToBottomSpy).toHaveBeenCalled();
+  });
+  
+  test('F5: Failure with retry - should retry and succeed on third attempt', async () => {
+    const chat = new HyperliquidChat();
+    chat.supabase = mockSupabase;
+    
+    // Mock failures for first two attempts, success on third
+    mockSupabase.order
+      .mockRejectedValueOnce(new Error('First failure'))
+      .mockRejectedValueOnce(new Error('Second failure'))
+      .mockResolvedValueOnce({ data: [{ id: 1, content: 'Success' }], error: null });
+    
+    // Replace setTimeout with immediate resolution for testing
+    jest.spyOn(global, 'setTimeout').mockImplementation((callback) => {
+      callback();
+      return 123; // Return a timeout ID
+    });
+    
+    await chat.loadChatHistoryWithRetry();
+    
+    // Assert
+    expect(mockSupabase.from).toHaveBeenCalledTimes(3);
+    expect(chat.messages).toEqual([{ id: 1, content: 'Success' }]);
+    
+    // Restore setTimeout
+    global.setTimeout.mockRestore();
+  });
+  
+  test('F6: Final failure - should show failure UI and throw error', async () => {
+    const chat = new HyperliquidChat();
+    chat.supabase = mockSupabase;
+    
+    // Mock failures for all attempts
+    const testError = new Error('Database error');
+    mockSupabase.order
+      .mockRejectedValueOnce(testError)
+      .mockRejectedValueOnce(testError)
+      .mockRejectedValueOnce(testError);
+    
+    // Replace setTimeout with immediate resolution for testing
+    jest.spyOn(global, 'setTimeout').mockImplementation((callback) => {
+      callback();
+      return 123; // Return a timeout ID
+    });
+    
+    // Assert that it throws
+    await expect(chat.loadChatHistoryWithRetry()).rejects.toThrow(testError);
+    
+    // Check that error UI is shown
+    const messagesContainer = document.getElementById('chatMessages');
+    expect(messagesContainer.innerHTML).toContain('Failed to load chat after 3 attempts');
+    expect(messagesContainer.innerHTML).toContain('Refresh Page');
+    
+    // Restore setTimeout
+    global.setTimeout.mockRestore();
+  });
+});
+
+describe('HyperliquidChat - Module G: Realtime subscription', () => {
+  let HyperliquidChat;
+  let mockSupabase;
+  let mockChannel;
+  
+  beforeEach(() => {
+    // Reset DOM
+    document.body.innerHTML = '';
+    
+    // Create messages container
+    const messagesContainer = document.createElement('div');
+    messagesContainer.id = 'chatMessages';
+    document.body.appendChild(messagesContainer);
+    
+    // Mock channel object
+    mockChannel = {
+      on: jest.fn().mockReturnThis(),
+      subscribe: jest.fn().mockImplementation((callback) => {
+        callback('SUBSCRIBED');
+        return mockChannel;
+      }),
+      send: jest.fn()
+    };
+    
+    // Mock Supabase client
+    mockSupabase = {
+      channel: jest.fn().mockReturnValue(mockChannel),
+      removeChannel: jest.fn()
+    };
+    
+    // Create a minimal version of HyperliquidChat for testing
+    HyperliquidChat = class {
+      constructor() {
+        this.currentPair = 'ETH-USDC';
+        this.currentMarket = 'Perps';
+        this.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
+        this.messages = [];
+        this.supabase = mockSupabase;
+        this.realtimeChannel = null;
+      }
+      
+      subscribeBroadcast() {
+        const roomId = `${this.currentPair}_${this.currentMarket}`;
+        
+        const channel = this.supabase.channel(`room_${roomId}`, {
+          config: { broadcast: { ack: true } },
+        })
+          .on('broadcast', { event: 'new-message' }, (payload) => {
+            const msg = payload.payload;
+            
+            // Only show messages for the current room and not from ourselves
+            if (msg.room === roomId && msg.address !== this.walletAddress) {
+              this.messages.push(msg);
+              document.getElementById("chatMessages").innerHTML = this.renderMessages();
+              this.scrollToBottom();
+            }
+          })
+          .subscribe((status) => {
+            // Subscription status callback
+          });
+    
+        this.realtimeChannel = channel;
+        return channel;
+      }
+      
+      renderMessages() {
+        return `<div class="rendered-messages">${this.messages.length} messages</div>`;
+      }
+      
+      scrollToBottom() {
+        // Mock implementation
+      }
+    };
+  });
+  
+  test('G1: Valid incoming broadcast - should append message, render, and scroll', () => {
+    const chat = new HyperliquidChat();
+    
+    // Create spy for scrollToBottom
+    const scrollToBottomSpy = jest.spyOn(chat, 'scrollToBottom');
+    
+    // Subscribe to broadcast
+    const channel = chat.subscribeBroadcast();
+    
+    // Get the broadcast handler
+    const broadcastHandler = mockChannel.on.mock.calls[0][2];
+    
+    // Simulate incoming broadcast for same room and different address
+    const incomingMessage = {
+      payload: {
+        address: '0xabcdef1234567890abcdef1234567890abcdef12', // Different address
+        content: 'Hello from someone else',
+        timestamp: 1625097600000,
+        room: 'ETH-USDC_Perps' // Same room
+      }
+    };
+    
+    // Call the handler directly
+    broadcastHandler(incomingMessage);
+    
+    // Assert
+    expect(chat.messages.length).toBe(1);
+    expect(chat.messages[0]).toEqual(incomingMessage.payload);
+    
+    const messagesContainer = document.getElementById('chatMessages');
+    expect(messagesContainer.innerHTML).toContain('1 messages');
+    expect(scrollToBottomSpy).toHaveBeenCalled();
+  });
+  
+  test('G2: Ignore message from same address - should not append message', () => {
+    const chat = new HyperliquidChat();
+    
+    // Create spy for scrollToBottom
+    const scrollToBottomSpy = jest.spyOn(chat, 'scrollToBottom');
+    
+    // Subscribe to broadcast
+    const channel = chat.subscribeBroadcast();
+    
+    // Get the broadcast handler
+    const broadcastHandler = mockChannel.on.mock.calls[0][2];
+    
+    // Simulate incoming broadcast for same room and same address (own message)
+    const incomingMessage = {
+      payload: {
+        address: '0x1234567890abcdef1234567890abcdef12345678', // Same as wallet address
+        content: 'Hello from me',
+        timestamp: 1625097600000,
+        room: 'ETH-USDC_Perps' // Same room
+      }
+    };
+    
+    // Call the handler directly
+    broadcastHandler(incomingMessage);
+    
+    // Assert
+    expect(chat.messages.length).toBe(0); // Should not add own message
+    expect(scrollToBottomSpy).not.toHaveBeenCalled();
+  });
+  
+  test('G3: Ignore message from different room - should not append message', () => {
+    const chat = new HyperliquidChat();
+    
+    // Create spy for scrollToBottom
+    const scrollToBottomSpy = jest.spyOn(chat, 'scrollToBottom');
+    
+    // Subscribe to broadcast
+    const channel = chat.subscribeBroadcast();
+    
+    // Get the broadcast handler
+    const broadcastHandler = mockChannel.on.mock.calls[0][2];
+    
+    // Simulate incoming broadcast for different room
+    const incomingMessage = {
+      payload: {
+        address: '0xabcdef1234567890abcdef1234567890abcdef12', // Different address
+        content: 'Hello from different room',
+        timestamp: 1625097600000,
+        room: 'BTC-USDC_Perps' // Different room
+      }
+    };
+    
+    // Call the handler directly
+    broadcastHandler(incomingMessage);
+    
+    // Assert
+    expect(chat.messages.length).toBe(0); // Should not add message from different room
+    expect(scrollToBottomSpy).not.toHaveBeenCalled();
+  });
+  
+  test('G4: Channel setup - should create channel with correct parameters', () => {
+    const chat = new HyperliquidChat();
+    
+    // Subscribe to broadcast
+    const channel = chat.subscribeBroadcast();
+    
+    // Assert
+    expect(mockSupabase.channel).toHaveBeenCalledWith('room_ETH-USDC_Perps', {
+      config: { broadcast: { ack: true } }
+    });
+    expect(mockChannel.on).toHaveBeenCalledWith('broadcast', { event: 'new-message' }, expect.any(Function));
+    expect(mockChannel.subscribe).toHaveBeenCalledWith(expect.any(Function));
+    expect(chat.realtimeChannel).toBe(mockChannel);
+  });
+});
+
 describe('HyperliquidChat - Module E: Auto-scroll behavior', () => {
   let HyperliquidChat;
   
