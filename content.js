@@ -6,6 +6,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 let supabase;
 let chatInstance;
+let pnlService;
 
 // Initialize Supabase and then start the chat
 function initializeSupabase() {
@@ -55,7 +56,25 @@ function initializeSupabase() {
 }
 
 // Initialize the chat once Supabase is ready
-function initializeChat() {
+async function initializeChat() {
+    // Initialize P&L service
+    try {
+        await import(chrome.runtime.getURL('pnl-service.js'));
+        
+        // Check if PnLService is available globally
+        if (typeof window.PnLService !== 'undefined') {
+            pnlService = new window.PnLService();
+            console.log('✅ P&L service initialized successfully');
+        } else if (typeof PnLService !== 'undefined') {
+            pnlService = new PnLService();
+            console.log('✅ P&L service initialized successfully (direct)');
+        } else {
+            console.error('❌ PnLService class not found after import');
+        }
+    } catch (error) {
+        console.error('❌ Failed to initialize P&L service:', error);
+    }
+    
     chatInstance = new HyperliquidChat();
     chatInstance.supabase = supabase; // Pass the Supabase instance
     chatInstance.init();
@@ -75,6 +94,9 @@ class HyperliquidChat {
     this.selectedName = ''
     // Auto-scroll preference (true = always keep view pinned to last message)
     this.autoScroll = true
+    // P&L data cache
+    this.userPnLCache = new Map()
+    this.pnLUpdateInterval = null
     // Inject a bridge script into the page to access window.ethereum in the page context
     this.injectWalletBridge()
     // Don't call init() here - it will be called by initializeChat()
@@ -305,10 +327,15 @@ class HyperliquidChat {
         
         const isOwn = msg.address === this.walletAddress
         const displayName = msg.name ? msg.name : this.formatAddress(msg.address)
+        
+        // Get P&L display for this user
+        const pnlDisplay = this.getPnLDisplayForAddress(msg.address)
+        
         const messageHTML = `
       <div class="hl-message ${isOwn ? "own" : ""}">
         <div class="hl-message-header">
           <span class="hl-message-address">${displayName}</span>
+          ${pnlDisplay ? `<span class="hl-pnl-badge" style="color: ${pnlDisplay.color}; margin-left: 8px; font-weight: bold;">${pnlDisplay.text}</span>` : ''}
           <span class="hl-message-time">${this.formatTime(msg.timestamp)}</span>
         </div>
         <div class="hl-message-content">${this.escapeHtml(msg.content)}</div>
@@ -542,6 +569,9 @@ class HyperliquidChat {
   }
 
   async loadChatHistoryWithRetry(maxRetries = 3) {
+    // Clear P&L cache when switching rooms
+    this.userPnLCache.clear();
+    
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         console.log(`Loading chat history attempt ${attempt}/${maxRetries}`)
@@ -626,6 +656,11 @@ class HyperliquidChat {
       this.messages = data || []
       console.log(`✅ Set this.messages to array with ${this.messages.length} items`)
       
+      // Load P&L data for all unique users in the chat
+      if (this.messages.length > 0 && pnlService) {
+        this.loadUserPnLData()
+      }
+      
       // Update the UI
       const messagesContainer = document.getElementById("chatMessages")
       console.log('🔍 Messages container element:', messagesContainer)
@@ -668,6 +703,12 @@ class HyperliquidChat {
         if (msg.room === roomId && msg.address !== this.walletAddress) {
           console.log('Adding message to UI:', msg)
           this.messages.push(msg)
+          
+          // Load P&L for new user if not cached
+          if (!this.userPnLCache.has(msg.address)) {
+            this.loadPnLForAddress(msg.address)
+          }
+          
           document.getElementById("chatMessages").innerHTML = this.renderMessages()
           this.scrollToBottom()
         } else {
@@ -794,6 +835,9 @@ class HyperliquidChat {
   }
 
   async startMarketMonitoring() {
+    // Start P&L refresh interval
+    this.startPnLRefresh()
+    
     // Monitor for market changes
     setInterval(() => {
       const oldPair = this.currentPair
@@ -807,8 +851,9 @@ class HyperliquidChat {
       if (oldRoomId !== newRoomId) {
         console.log(`Room changed: ${oldRoomId} -> ${newRoomId}`)
         
-        // Clear current messages
+        // Clear current messages and P&L cache
         this.messages = []
+        this.userPnLCache.clear()
         
         // Update chat header immediately
         this.updateChatHeader()
@@ -1002,6 +1047,77 @@ class HyperliquidChat {
       console.error("Error fetching HL names", err)
       return []
     }
+  }
+
+  // P&L related methods
+  getPnLDisplayForAddress(address) {
+    return this.userPnLCache.get(address) || null
+  }
+
+  async loadUserPnLData() {
+    if (!pnlService) {
+      console.warn('P&L service not initialized')
+      return
+    }
+
+    // Get unique addresses from messages
+    const uniqueAddresses = [...new Set(this.messages.map(m => m.address))]
+    console.log(`Loading P&L data for ${uniqueAddresses.length} unique users`)
+
+    // Load P&L for each address
+    for (const address of uniqueAddresses) {
+      this.loadPnLForAddress(address)
+    }
+  }
+
+  async loadPnLForAddress(address) {
+    if (!pnlService) {
+      console.warn(`Cannot load P&L - service not initialized`)
+      return
+    }
+    if (!address) {
+      console.warn(`Cannot load P&L - no address provided`)
+      return
+    }
+
+    try {
+      console.log(`📊 Loading P&L for address: ${address}, pair: ${this.currentPair}`)
+      const pnlDisplay = await pnlService.getPnLDisplay(address, this.currentPair)
+      
+      if (pnlDisplay) {
+        console.log(`✅ P&L loaded for ${address}:`, pnlDisplay)
+        this.userPnLCache.set(address, pnlDisplay)
+        // Update UI if messages are already rendered
+        this.updateMessagesIfNeeded()
+      } else {
+        console.log(`⚠️ No P&L data returned for ${address}`)
+      }
+    } catch (error) {
+      console.error(`Failed to load P&L for ${address}:`, error)
+    }
+  }
+
+  updateMessagesIfNeeded() {
+    const messagesContainer = document.getElementById("chatMessages")
+    if (messagesContainer && this.messages.length > 0) {
+      messagesContainer.innerHTML = this.renderMessages()
+    }
+  }
+
+  startPnLRefresh() {
+    // Clear existing interval if any
+    if (this.pnLUpdateInterval) {
+      clearInterval(this.pnLUpdateInterval)
+    }
+
+    // Refresh P&L data every 2 minutes
+    this.pnLUpdateInterval = setInterval(() => {
+      if (this.messages.length > 0 && pnlService) {
+        console.log('Refreshing P&L data...')
+        pnlService.clearCache() // Clear the service cache
+        this.loadUserPnLData()
+      }
+    }, 120000) // 2 minutes
   }
 }
 
