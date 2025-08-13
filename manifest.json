@@ -3,7 +3,7 @@
   "name": "Hyperliquid Chat",
   "version": "1.0.0",
   "description": "Chat with traders on Hyperliquid",
-  "permissions": ["activeTab", "storage", "scripting"],
+  "permissions": ["activeTab", "storage", "scripting", "sidePanel"],
   "host_permissions": [
     "https://app.hyperliquid.xyz/*",
     "https://gwxiafgocfqjyapgqfnl.supabase.co/*",
@@ -22,6 +22,9 @@
   "action": {
     "default_popup": "popup.html",
     "default_title": "Hyperliquid Chat"
+  },
+  "side_panel": {
+    "default_path": "chat-widget.html"
   },
   "web_accessible_resources": [
     {

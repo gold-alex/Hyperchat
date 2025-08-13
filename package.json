@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "rm -rf dist && mkdir -p dist && cp manifest.json background.js popup.html popup.js chat-widget.html chat-widget.js chromeStorageAdapter.js content.css content.js supabase.js dist/",
+    "build": "rm -rf dist && mkdir -p dist && cp manifest.json background.js popup.html popup.js chat-widget.html chat-widget.js chromeStorageAdapter.js content.css content.js wallet-bridge.js supabase.js dist/",
     "dev": "next dev",
     "lint": "next lint",
     "start": "next start",

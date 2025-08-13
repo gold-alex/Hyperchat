@@ -83,10 +83,32 @@ class HyperliquidChat {
   async init() {
     console.log("Initializing HyperliquidChat...")
     
+    // If in standalone mode without overrides, request current market info from active tab
+    if (window.IS_STANDALONE_CHAT && !window.CHAT_PAIR_OVERRIDE) {
+      console.log("Standalone mode without overrides, requesting market info from active tab")
+      try {
+        const response = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({ action: 'getCurrentMarketInfo' }, resolve)
+        })
+        if (response && response.pair && response.market) {
+          console.log("Received market info from active tab:", response)
+          window.CHAT_PAIR_OVERRIDE = response.pair
+          window.CHAT_MARKET_OVERRIDE = response.market
+          // Force update current values immediately
+          this.currentPair = response.pair
+          this.currentMarket = response.market
+          console.log("Updated currentPair/currentMarket:", this.currentPair, this.currentMarket)
+        }
+      } catch (error) {
+        console.warn("Failed to get market info from active tab:", error)
+      }
+    }
+    
     // First detect market info and create widget
     this.detectMarketInfo()
     this.createChatWidget()
     this.setupMessageListener()
+    this.connectPort()
     this.startMarketMonitoring()
     
     // Wait a moment for DOM to settle and market detection to complete
@@ -119,35 +141,36 @@ class HyperliquidChat {
   }
 
   detectMarketInfo() {
-    console.log("Detecting market info...")
+    // console.log("Detecting market info...")
     
     // Allow override when running in standalone tab
     if (window.CHAT_PAIR_OVERRIDE) {
       this.currentPair = window.CHAT_PAIR_OVERRIDE;
       this.currentMarket = window.CHAT_MARKET_OVERRIDE || 'Perps';
+      // console.log(`✅ Using overrides - Pair: "${this.currentPair}", Market: "${this.currentMarket}"`)
       return;
     }
     
     // Detect trading pair using the specific coinInfo selector
     let pairElement = document.querySelector("#coinInfo > div > div:nth-child(2) > div:nth-child(1) > div > div > div > div:nth-child(2) > div")
-    console.log("Primary pair element:", pairElement)
+    // console.log("Primary pair element:", pairElement)
     
     // Fallback selectors if the primary one fails
     if (!pairElement || !pairElement.textContent.trim()) {
-      console.log("Primary selector failed, trying fallbacks...")
+      // console.log("Primary selector failed, trying fallbacks...")
       pairElement = document.querySelector(".sc-bjfHbI.bFBYgR") ||
                    document.querySelector("[data-testid='trading-pair']") || 
                    document.querySelector(".trading-pair") ||
                    document.querySelector("h1") // fallback to main heading
-      console.log("Fallback pair element:", pairElement)
+      // console.log("Fallback pair element:", pairElement)
     }
     
     if (pairElement) {
       const newPair = pairElement.textContent.trim()
-      console.log(`Raw pair text: "${newPair}"`)
+      // console.log(`Raw pair text: "${newPair}"`)
       
       if (newPair && newPair !== this.currentPair) {
-        console.log(`Trading pair changed: "${this.currentPair}" -> "${newPair}"`)
+        // console.log(`Trading pair changed: "${this.currentPair}" -> "${newPair}"`)
         this.currentPair = newPair
       }
     } else {
@@ -158,17 +181,17 @@ class HyperliquidChat {
     const spotElement = document.querySelector(
       'div[style*="background: rgb(7, 39, 35)"] .sc-bjfHbI.jxtURp.body12Regular',
     )
-    console.log("Spot detection element:", spotElement)
+    // console.log("Spot detection element:", spotElement)
     const newMarket = spotElement && spotElement.textContent.includes("Spot") ? "Spot" : "Perps"
-    console.log(`Detected market type: "${newMarket}"`)
+    // console.log(`Detected market type: "${newMarket}"`)
     
     if (newMarket !== this.currentMarket) {
-      console.log(`Market type changed: "${this.currentMarket}" -> "${newMarket}"`)
+      // console.log(`Market type changed: "${this.currentMarket}" -> "${newMarket}"`)
       this.currentMarket = newMarket
     }
 
     const roomId = `${this.currentPair}_${this.currentMarket}`
-    console.log(`Current room ID: "${roomId}"`)
+    // console.log(`Current room ID: "${roomId}"`)
     
     // Fallback if no pair detected
     if (!this.currentPair) {
@@ -176,7 +199,7 @@ class HyperliquidChat {
       console.warn("❌ Could not detect trading pair, using UNKNOWN")
     }
     
-    console.log(`✅ Final market info - Pair: "${this.currentPair}", Market: "${this.currentMarket}", Room: "${roomId}"`)
+    // console.log(`✅ Final market info - Pair: "${this.currentPair}", Market: "${this.currentMarket}", Room: "${roomId}"`)
   }
 
   createChatWidget() {
@@ -188,15 +211,25 @@ class HyperliquidChat {
     const widget = document.createElement("div")
     widget.id = "hyperliquid-chat-widget"
     widget.className = "hl-chat-widget"
-    // Make resizable via CSS; dragging implemented below
-    widget.style.resize = 'both'
-    widget.style.overflow = 'hidden'
+    // Adjust behavior based on context
+    if (!window.IS_STANDALONE_CHAT) {
+      // Make resizable via CSS; dragging implemented below
+      widget.style.resize = 'both'
+      widget.style.overflow = 'hidden'
+    } else {
+      // In side panel / standalone, fill available space and disable float behaviors
+      widget.style.width = '100%'
+      widget.style.height = '100%'
+      widget.style.position = 'static'
+    }
 
     widget.innerHTML = this.getChatHTML()
 
     document.body.appendChild(widget)
-    // Enable dragging by header
-    this.enableDrag(widget, widget.querySelector('#moveChat') || widget.querySelector('.hl-chat-header'))
+    // Enable dragging by header only in page-embedded mode
+    if (!window.IS_STANDALONE_CHAT) {
+      this.enableDrag(widget, widget.querySelector('#moveChat') || widget.querySelector('.hl-chat-header'))
+    }
     this.setupEventListeners()
   }
 
@@ -246,6 +279,7 @@ class HyperliquidChat {
             <label for="autoScrollCheckbox">Auto-scroll</label>
           </div>
           <div class="hl-chat-controls">
+            ${window.IS_STANDALONE_CHAT ? `<button class="hl-chat-popout" id="toggleUIMode" title="Switch extension UI mode">Mode</button>` : ''}
             ${window.IS_STANDALONE_CHAT ? `<button class="hl-chat-popin" id="popInChat" title="Return to page">⇦</button>` : `<button class="hl-chat-popout" id="popOutChat" title="Open in new tab">↗</button>`}
             <button class="hl-chat-close" id="closeChat">×</button>
           </div>
@@ -436,17 +470,37 @@ class HyperliquidChat {
           window.close()
         })
       }
+      const modeBtn = document.getElementById("toggleUIMode")
+      if (modeBtn) {
+        modeBtn.addEventListener("click", () => {
+          // Set UI mode to popup and open popup in the same operation
+          const pair = this.currentPair
+          const market = this.currentMarket
+          
+          // First open the popup, then close the side panel
+          chrome.runtime.sendMessage({ 
+            action: "switchToPopupMode", 
+            pair: pair,
+            market: market
+          }, () => {
+            // Close the side panel after ensuring popup is ready
+            window.close()
+          })
+        })
+      }
     }
   }
 
   // Injects a small script into the actual page context so we can access window.ethereum
   injectWalletBridge() {
     const url = chrome.runtime.getURL('wallet-bridge.js');      // extension-local url
+    console.log('[CS] injecting wallet bridge', url)
     const script = document.createElement('script');
     script.src = url;
     script.type = 'text/javascript';
     script.async = false;
     (document.head || document.documentElement).appendChild(script);
+    script.addEventListener('load', ()=>console.log('[CS] wallet bridge loaded'))
     script.remove(); // keep DOM clean
   }
 
@@ -459,23 +513,51 @@ class HyperliquidChat {
         if (event.source !== window || !event.data || event.data.type !== 'HL_CONNECT_WALLET_RESPONSE' || event.data.id !== id) return;
         window.removeEventListener('message', handler);
         if (event.data.error) {
+          console.warn('[CS] HL_CONNECT_WALLET_RESPONSE error', event.data.error)
           reject(new Error(event.data.error));
         } else {
+          console.log('[CS] HL_CONNECT_WALLET_RESPONSE accounts', event.data.accounts)
           resolve(event.data.accounts);
         }
       };
 
       window.addEventListener('message', handler);
+      console.log('[CS] post HL_CONNECT_WALLET_REQUEST', { id })
       window.postMessage({ type: 'HL_CONNECT_WALLET_REQUEST', id }, '*');
     });
   }
 
+  // Request accounts via background script proxy for side panel
+  requestAccountsViaProxy() {
+    return new Promise((resolve, reject) => {
+      try {
+        console.log('[CS] proxyRequestAccounts send')
+        chrome.runtime.sendMessage({ action: 'proxyRequestAccounts' }, (resp) => {
+          if (chrome.runtime.lastError) {
+            console.warn('[CS] proxyRequestAccounts lastError', chrome.runtime.lastError.message)
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          if (resp && resp.accounts) {
+            console.log('[CS] proxyRequestAccounts resp.accounts', resp.accounts)
+            resolve(resp.accounts);
+          } else {
+            console.warn('[CS] proxyRequestAccounts error resp', resp)
+            reject(new Error(resp?.error || 'Failed to connect wallet via proxy'));
+          }
+        });
+      } catch (e) {
+        console.warn('[CS] proxyRequestAccounts threw', e)
+        reject(e);
+      }
+    });
+  }
 
 
   async connectWallet() {
     try {
       console.log("Starting wallet connection...")
-      const accounts = await this.requestAccounts()
+      const accounts = await (window.IS_STANDALONE_CHAT ? this.requestAccountsViaProxy() : this.requestAccounts())
       console.log("Accounts received:", accounts)
       
       if (accounts && accounts.length > 0) {
@@ -484,7 +566,6 @@ class HyperliquidChat {
 
         // Perform backend authentication to get JWT
         await this.handleBackendAuth()
-        console.log("Backend auth successful")
 
         // Fetch HL names owned by this wallet and set default
         try {
@@ -495,6 +576,12 @@ class HyperliquidChat {
         }
 
         // Recreate the chat widget to show connected state
+        // Preserve market info in standalone mode before recreating
+        if (window.IS_STANDALONE_CHAT && window.CHAT_PAIR_OVERRIDE) {
+          this.currentPair = window.CHAT_PAIR_OVERRIDE
+          this.currentMarket = window.CHAT_MARKET_OVERRIDE || 'Perps'
+          console.log("Preserving market info before widget recreation:", this.currentPair, this.currentMarket)
+        }
         this.createChatWidget()
 
         // Reload chat history with authenticated user
@@ -526,19 +613,26 @@ class HyperliquidChat {
     // Ask wallet to sign
     const signature = await this.signMessage(loginMsg)
 
-    // Send to backend
-    const resp = await fetch('http://localhost:3001/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address: this.walletAddress, signature, timestamp: ts })
-    })
+    // Send to backend (optional - graceful fallback if server unavailable)
+    try {
+      const resp = await fetch('http://localhost:3001/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: this.walletAddress, signature, timestamp: ts })
+      })
 
-    if (!resp.ok) {
-      throw new Error('Authentication failed')
+      if (!resp.ok) {
+        throw new Error(`Authentication failed: ${resp.status}`)
+      }
+
+      const data = await resp.json()
+      this.jwtToken = data.token
+      console.log('✅ Backend auth successful')
+    } catch (error) {
+      console.warn('⚠️ Backend auth failed, continuing in read-only mode:', error.message)
+      // Continue without JWT - user can still read messages but not send
+      this.jwtToken = null
     }
-
-    const data = await resp.json()
-    this.jwtToken = data.token
   }
 
   async loadChatHistoryWithRetry(maxRetries = 3) {
@@ -693,9 +787,15 @@ class HyperliquidChat {
 
     if (!content || !this.walletAddress) return
     
-    // Ensure we have a JWT token
+    // Check if we can send messages (wallet connected, backend optional)
+    if (!this.walletAddress) {
+      alert('Please connect your wallet to send messages')
+      return
+    }
+    
+    // If no JWT token, warn about read-only mode
     if (!this.jwtToken) {
-      alert('Please reconnect your wallet to send messages')
+      alert('Backend server unavailable. Messages cannot be sent in read-only mode.\n\nYou can still read messages, but sending requires the backend server.')
       return
     }
 
@@ -911,8 +1011,51 @@ class HyperliquidChat {
             this.subscribeBroadcast()
           })
         }
+      } else if (request.action === 'doRequestAccounts') {
+        // Handle proxy request coming from background -> content script
+        // Use setTimeout to avoid "message channel closed" by responding immediately
+        setTimeout(() => {
+          this.requestAccounts().then((accounts) => {
+            sendResponse({ accounts })
+          }).catch((err) => {
+            sendResponse({ error: err?.message || 'Failed to connect wallet' })
+          })
+        }, 0)
+        return true
+      } else if (request.action === 'doSignMessage' && typeof request.message === 'string') {
+        // Use setTimeout to avoid "message channel closed" by responding immediately  
+        setTimeout(() => {
+          this.signMessage(request.message).then((signature) => {
+            sendResponse({ signature })
+          }).catch((err) => {
+            sendResponse({ error: err?.message || 'Failed to sign message' })
+          })
+        }, 0)
+        return true
+      } else if (request.action === 'getMarketInfo') {
+        // Return current market info for side panel initialization
+        this.detectMarketInfo() // Refresh current info
+        sendResponse({ 
+          pair: this.currentPair, 
+          market: this.currentMarket 
+        })
+        return true
       }
     })
+  }
+
+  // Establish a long-lived connection so background can detect receiver presence
+  connectPort() {
+    try {
+      if (!this._port) {
+        this._port = chrome.runtime.connect({ name: 'hl-content' })
+        this._port.onDisconnect.addEventListener(() => {
+          this._port = null
+        })
+      }
+    } catch (_) {
+      // ignore
+    }
   }
 
   formatAddress(address) {
@@ -971,6 +1114,30 @@ class HyperliquidChat {
 
   // Ask page context to sign a message
   signMessage(message) {
+    if (window.IS_STANDALONE_CHAT) {
+      return new Promise((resolve, reject) => {
+        try {
+          console.log('[CS] proxySignMessage send')
+          chrome.runtime.sendMessage({ action: 'proxySignMessage', message, address: this.walletAddress }, (resp) => {
+            if (chrome.runtime.lastError) {
+              console.warn('[CS] proxySignMessage lastError', chrome.runtime.lastError.message)
+              reject(new Error(chrome.runtime.lastError.message))
+              return
+            }
+            if (resp && resp.signature) {
+              console.log('[CS] proxySignMessage signature ok')
+              resolve(resp.signature)
+            } else {
+              console.warn('[CS] proxySignMessage error resp', resp)
+              reject(new Error(resp?.error || 'Failed to sign message'))
+            }
+          })
+        } catch (e) {
+          console.warn('[CS] proxySignMessage threw', e)
+          reject(e)
+        }
+      })
+    }
     return new Promise((resolve, reject) => {
       const id = Date.now() + Math.random();
 
@@ -978,15 +1145,18 @@ class HyperliquidChat {
         if (event.source !== window || !event.data || event.data.type !== 'HL_SIGN_RESPONSE' || event.data.id !== id) return;
         window.removeEventListener('message', handler);
         if (event.data.error) {
+          console.warn('[CS] HL_SIGN_RESPONSE error', event.data.error)
           reject(new Error(event.data.error));
         } else {
+          console.log('[CS] HL_SIGN_RESPONSE signature ok')
           resolve(event.data.signature);
         }
       };
 
       window.addEventListener('message', handler);
+      console.log('[CS] post HL_SIGN_REQUEST', { id })
       window.postMessage({ type: 'HL_SIGN_REQUEST', id, message, address: this.walletAddress }, '*');
-    });
+    })
   }
 
   // Fetch HL names owned by an address via public API

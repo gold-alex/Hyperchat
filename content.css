@@ -25,6 +25,7 @@
   transform: translateX(370px);
   transition: transform 0.3s ease;
   overflow: hidden;
+  position: relative;
 }
 
 .hl-chat-container.visible {
@@ -428,4 +429,32 @@
 .hl-chat-popin:hover {
   background: #1a3d37;
   color: #f6fefb;
+}
+
+/* Side panel/standalone adjustments */
+:root[data-hl-standalone="true"] .hl-chat-widget {
+  position: relative;
+  top: 0;
+  right: 0;
+  left: 0;
+  bottom: 0;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0;
+  min-height: 0;
+}
+
+:root[data-hl-standalone="true"] .hl-chat-container {
+  transform: none !important;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 0;
+}
+
+:root[data-hl-standalone="true"] .hl-chat-toggle {
+  display: none !important;
+}
+
+:root[data-hl-standalone="true"] .hl-chat-header {
+  cursor: default;
 }
