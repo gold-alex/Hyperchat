@@ -83,6 +83,9 @@ class HyperliquidChat {
   async init() {
     console.log("Initializing HyperliquidChat...")
     
+    // Load stored JWT and wallet info from Chrome storage
+    await this.loadStoredAuth()
+
     // If in standalone mode without overrides, request current market info from active tab
     if (window.IS_STANDALONE_CHAT && !window.CHAT_PAIR_OVERRIDE) {
       console.log("Standalone mode without overrides, requesting market info from active tab")
@@ -450,6 +453,8 @@ class HyperliquidChat {
     if (nameSelect) {
       nameSelect.addEventListener("change", (e) => {
         this.selectedName = e.target.value
+        // Store the selected name
+        chrome.storage.local.set({ selectedName: this.selectedName })
       })
     }
 
@@ -556,18 +561,34 @@ class HyperliquidChat {
       console.log("Accounts received:", accounts)
       
       if (accounts && accounts.length > 0) {
-        this.walletAddress = accounts[0]
-        console.log("Wallet connected:", this.walletAddress)
+        const newWalletAddress = accounts[0]
 
-        // Perform backend authentication to get JWT
-        await this.handleBackendAuth()
+        // Check if this is the same wallet we already have stored
+        if (this.walletAddress === newWalletAddress && this.jwtToken) {
+          console.log("Wallet already connected with stored JWT:", this.walletAddress)
+        } else {
+          // New wallet or no stored JWT
+          this.walletAddress = newWalletAddress
+          console.log("Wallet connected:", this.walletAddress)
 
-        // Fetch HL names owned by this wallet and set default
-        try {
-          this.availableNames = await this.fetchHLNames(this.walletAddress)
-          console.log("Available HL names:", this.availableNames)
-        } catch (err) {
-          console.error("Failed to fetch HL names", err)
+          // Perform backend authentication to get JWT
+          await this.handleBackendAuth()
+
+          // Fetch HL names owned by this wallet and set default
+          try {
+            this.availableNames = await this.fetchHLNames(this.walletAddress)
+            console.log("Available HL names:", this.availableNames)
+
+            // Update stored names
+            await new Promise((resolve) => {
+              chrome.storage.local.set({
+                availableNames: this.availableNames,
+                selectedName: this.selectedName
+              }, resolve)
+            })
+          } catch (err) {
+            console.error("Failed to fetch HL names", err)
+          }
         }
 
         // Recreate the chat widget to show connected state
@@ -583,7 +604,7 @@ class HyperliquidChat {
         console.log("Reloading chat history...")
         await this.loadChatHistoryWithRetry()
         console.log("Setting up broadcast subscription...")
-        
+
         // Unsubscribe from old channel first
         if (this.realtimeChannel) {
           this.supabase.removeChannel(this.realtimeChannel)
@@ -600,7 +621,62 @@ class HyperliquidChat {
     }
   }
 
+  async loadStoredAuth() {
+    try {
+      const result = await new Promise((resolve) => {
+        chrome.storage.local.get(['jwtToken', 'walletAddress', 'availableNames', 'selectedName'], resolve)
+      })
+
+      if (result.jwtToken && result.walletAddress) {
+        this.jwtToken = result.jwtToken
+        this.walletAddress = result.walletAddress
+        this.availableNames = result.availableNames || []
+        this.selectedName = result.selectedName || ''
+        console.log('Loaded stored auth - wallet:', this.walletAddress)
+        console.log('Loaded stored JWT token')
+        return true
+      }
+    } catch (error) {
+      console.warn('Failed to load stored auth:', error)
+    }
+    return false
+  }
+
+  async clearStoredAuth() {
+    try {
+      await new Promise((resolve) => {
+        chrome.storage.local.remove(['jwtToken', 'walletAddress', 'availableNames', 'selectedName'], resolve)
+      })
+      this.jwtToken = null
+      this.walletAddress = ""
+      this.availableNames = []
+      this.selectedName = ''
+      console.log('Cleared stored authentication')
+    } catch (error) {
+      console.warn('Failed to clear stored auth:', error)
+    }
+  }
+
   async handleBackendAuth() {
+    // Check if we already have a valid JWT for this wallet
+    if (this.jwtToken && this.walletAddress) {
+      // Check if JWT is expired (JWT tokens are valid for 24 hours)
+      try {
+        const tokenData = JSON.parse(atob(this.jwtToken.split('.')[1]))
+        const now = Math.floor(Date.now() / 1000)
+        if (tokenData.exp && tokenData.exp > now) {
+          console.log('Using existing valid JWT token for wallet:', this.walletAddress)
+          return
+        } else {
+          console.log('JWT token expired, will request new one')
+          this.jwtToken = null
+        }
+      } catch (error) {
+        console.warn('Failed to parse JWT token, will request new one:', error)
+        this.jwtToken = null
+      }
+    }
+
     // Build login message
     const ts = Date.now()
     const loginMsg = `HyperLiquidChat login ${ts}`
@@ -610,7 +686,7 @@ class HyperliquidChat {
 
     // Send to backend (optional - graceful fallback if server unavailable)
     try {
-      const resp = await fetch('http://localhost:3001/auth', {
+      const resp = await fetch('http://localhost:3002/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ address: this.walletAddress, signature, timestamp: ts })
@@ -622,9 +698,20 @@ class HyperliquidChat {
 
       const data = await resp.json()
       this.jwtToken = data.token
-      console.log('✅ Backend auth successful')
+
+      // Store JWT and wallet info in Chrome storage
+      await new Promise((resolve) => {
+        chrome.storage.local.set({
+          jwtToken: this.jwtToken,
+          walletAddress: this.walletAddress,
+          availableNames: this.availableNames,
+          selectedName: this.selectedName
+        }, resolve)
+      })
+
+      console.log('Backend auth successful and stored')
     } catch (error) {
-      console.warn('⚠️ Backend auth failed, continuing in read-only mode:', error.message)
+      console.warn('Backend auth failed, continuing in read-only mode:', error.message)
       // Continue without JWT - user can still read messages but not send
       this.jwtToken = null
     }
@@ -661,17 +748,17 @@ class HyperliquidChat {
     
     // Make sure we have a valid room ID
     if (!this.currentPair || this.currentPair === "UNKNOWN") {
-      console.warn("❌ Cannot load chat history - trading pair not detected yet")
+      console.warn("Cannot load chat history - trading pair not detected yet")
       return
     }
 
     // Check if Supabase is initialized
     if (!this.supabase) {
-      console.error("❌ Supabase client not initialized!")
+      console.error("Supabase client not initialized!")
       return
     }
     
-    console.log("✅ Supabase client is initialized")
+    console.log("Supabase client is initialized")
     
     try {
       console.log(`Querying Supabase for room: "${roomId}"`)
@@ -686,8 +773,8 @@ class HyperliquidChat {
       console.log('Supabase response:', { data, error })
 
       if (error) {
-        console.error('❌ Supabase load error:', error)
-        console.error('❌ Error details:', {
+        console.error('Supabase load error:', error)
+        console.error('Error details:', {
           message: error.message,
           details: error.details,
           hint: error.hint,
@@ -702,7 +789,7 @@ class HyperliquidChat {
         throw error // Re-throw to be caught by caller
       }
 
-      console.log(`✅ Query successful! Found ${data ? data.length : 0} messages for room "${roomId}"`)
+      console.log(`Query successful! Found ${data ? data.length : 0} messages for room "${roomId}"`)
       
       if (data && data.length > 0) {
         console.log('First message sample:', data[0])
@@ -713,7 +800,7 @@ class HyperliquidChat {
 
       // Always set messages (even if empty array)
       this.messages = data || []
-      console.log(`✅ Set this.messages to array with ${this.messages.length} items`)
+      console.log(`Set this.messages to array with ${this.messages.length} items`)
       
       // Update the UI
       const messagesContainer = document.getElementById("chatMessages")
@@ -729,15 +816,15 @@ class HyperliquidChat {
           console.log('Rendered messages HTML:', renderedHTML)
           messagesContainer.innerHTML = renderedHTML
           this.scrollToBottom()
-          console.log('✅ Updated chat UI with messages and scrolled to bottom')
+          console.log('Updated chat UI with messages and scrolled to bottom')
         }
       } else {
-        console.error("❌ Messages container not found in DOM!")
+        console.error("Messages container not found in DOM!")
         console.log('Available elements with IDs:', Array.from(document.querySelectorAll('[id]')).map(el => el.id))
       }
       
     } catch (err) {
-      console.error('❌ Failed to load chat history:', err)
+      console.error('Failed to load chat history:', err)
       throw err // Re-throw to be handled by caller
     }
   }
@@ -831,7 +918,7 @@ class HyperliquidChat {
       this.scrollToBottom()
 
       // Send to backend
-      const response = await fetch('http://localhost:3001/message', {
+      const response = await fetch('http://localhost:3002/message', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
