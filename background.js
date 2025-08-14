@@ -90,15 +90,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   if (request.action === 'switchToPopupMode') {
     console.log('[BG] switchToPopupMode')
-    // First set UI mode to popup
-    chrome.storage.local.set({ [UIMODE_KEY]: 'popup' }, () => {
+
+    // Store the current pair/market for the popup to use
+    chrome.storage.local.set({
+      currentPair: request.pair || 'UNKNOWN',
+      currentMarket: request.market || 'Perps',
+      [UIMODE_KEY]: 'popup'
+    }, () => {
+      // Apply UI mode setting to use popup
       applyUIMode('popup')
-      
-      // Then open popup window with the specified pair/market
-      const url = chrome.runtime.getURL(`chat-widget.html?pair=${encodeURIComponent(request.pair||'UNKNOWN')}&market=${encodeURIComponent(request.market||'Perps')}`)
-      chrome.tabs.create({ url }, () => {
-        sendResponse({ success: true })
-      })
+
+      // No need for notification - user will click the extension icon
+
+      sendResponse({ success: true })
     })
     return true
   }

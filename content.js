@@ -473,17 +473,17 @@ class HyperliquidChat {
       const modeBtn = document.getElementById("toggleUIMode")
       if (modeBtn) {
         modeBtn.addEventListener("click", () => {
-          // Set UI mode to popup and open popup in the same operation
+          // Set UI mode to popup and store current market info
           const pair = this.currentPair
           const market = this.currentMarket
           
-          // First open the popup, then close the side panel
+          // Store info for popup and show notification
           chrome.runtime.sendMessage({ 
             action: "switchToPopupMode", 
             pair: pair,
             market: market
           }, () => {
-            // Close the side panel after ensuring popup is ready
+            // Close the side panel
             window.close()
           })
         })

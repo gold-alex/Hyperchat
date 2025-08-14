@@ -59,12 +59,42 @@ document.addEventListener("DOMContentLoaded", () => {
   })
 
   document.getElementById("openChat").addEventListener("click", () => {
-    window.chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0].url.includes("app.hyperliquid.xyz/trade")) {
-        window.chrome.tabs.sendMessage(tabs[0].id, { action: "toggleChat" })
-        window.close()
+    // Check if we have stored pair/market info from a previous sidepanel session
+    chrome.storage.local.get(['currentPair', 'currentMarket'], (result) => {
+      const pair = result.currentPair
+      const market = result.currentMarket
+
+      if (pair && market) {
+        // We have stored market info from sidepanel, use it for popup
+        // Create a popup version of the chat widget
+        const popupWindow = window.open(
+          chrome.runtime.getURL(`chat-widget.html?pair=${encodeURIComponent(pair)}&market=${encodeURIComponent(market)}`),
+          'hlChatPopup',
+          'width=400,height=600,top=100,left=100,resizable=yes,scrollbars=yes'
+        )
+
+        if (popupWindow) {
+          // Focus the new window
+          popupWindow.focus()
+          // Close the extension popup
+          window.close()
+        } else {
+          // Popup blocked, fallback to tab
+          chrome.tabs.create({
+            url: chrome.runtime.getURL(`chat-widget.html?pair=${encodeURIComponent(pair)}&market=${encodeURIComponent(market)}`)
+          })
+          window.close()
+        }
       } else {
-        window.chrome.tabs.create({ url: "https://app.hyperliquid.xyz/trade" })
+        // No stored info, use the normal flow
+        window.chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          if (tabs[0] && tabs[0].url && tabs[0].url.includes("app.hyperliquid.xyz/trade")) {
+            window.chrome.tabs.sendMessage(tabs[0].id, { action: "toggleChat" })
+            window.close()
+          } else {
+            window.chrome.tabs.create({ url: "https://app.hyperliquid.xyz/trade" })
+          }
+        })
       }
     })
   })
