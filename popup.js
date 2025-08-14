@@ -39,22 +39,28 @@ document.addEventListener("DOMContentLoaded", () => {
     </div>
   `
 
+  function updateUIModeDisplay(mode) {
+    const label = document.getElementById('modeLabel');
+    const btn = document.getElementById('toggleMode');
+    if (label && btn) {
+        const isSidePanel = mode === 'sidepanel';
+        label.textContent = isSidePanel ? 'Current Mode: Side Panel' : 'Current Mode: Popup';
+        btn.textContent = isSidePanel ? 'Switch to Popup Mode' : 'Switch to Side Panel Mode';
+    }
+  }
+
   // Initialize UI mode state
   chrome.runtime.sendMessage({ action: 'getUIMode' }, (resp) => {
-    const mode = resp?.mode || 'sidepanel'
-    const label = document.getElementById('modeLabel')
-    const btn = document.getElementById('toggleMode')
-    if (label) label.textContent = mode
-    if (btn) btn.textContent = mode === 'sidepanel' ? 'Switch to Popup' : 'Switch to Sidepanel'
+    if (resp && resp.mode) {
+        updateUIModeDisplay(resp.mode);
+    }
   })
 
   document.getElementById('toggleMode').addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'toggleUIMode' }, (resp) => {
-      const mode = resp?.mode || 'sidepanel'
-      const label = document.getElementById('modeLabel')
-      const btn = document.getElementById('toggleMode')
-      if (label) label.textContent = mode
-      if (btn) btn.textContent = mode === 'sidepanel' ? 'Switch to Popup' : 'Switch to Sidepanel'
+      if (resp && resp.mode) {
+        updateUIModeDisplay(resp.mode);
+      }
     })
   })
 
@@ -98,4 +104,11 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     })
   })
+  
+  // Listen for live updates from the background script
+  chrome.runtime.onMessage.addListener((request) => {
+    if (request.action === 'uiModeChanged') {
+      updateUIModeDisplay(request.newMode);
+    }
+  });
 })

@@ -76,35 +76,70 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'toggleUIMode') {
-    console.log('[BG] toggleUIMode')
+    console.log('[BG] toggleUIMode');
     chrome.storage.local.get([UIMODE_KEY], (result) => {
-      const current = result[UIMODE_KEY] || 'sidepanel'
-      const next = current === 'sidepanel' ? 'popup' : 'sidepanel'
+      const current = result[UIMODE_KEY] || 'sidepanel';
+      const next = current === 'sidepanel' ? 'popup' : 'sidepanel';
       chrome.storage.local.set({ [UIMODE_KEY]: next }, () => {
-        applyUIMode(next)
-        sendResponse({ success: true, mode: next })
-      })
-    })
-    return true
+        applyUIMode(next);
+
+        // Broadcast the mode change to all active tabs/popups
+        chrome.tabs.query({}, (tabs) => {
+          tabs.forEach(tab => {
+            chrome.tabs.sendMessage(tab.id, { action: 'uiModeChanged', newMode: next }).catch(() => { /* ignore errors for tabs without the content script */ });
+          });
+        });
+
+        sendResponse({ success: true, mode: next });
+      });
+    });
+    return true; // Async response
   }
   
-  if (request.action === 'switchToPopupMode') {
-    console.log('[BG] switchToPopupMode')
+  if (request.action === "switchToPopupAndOpen") {
+    console.log('[BG] switchToPopupAndOpen', { pair: request.pair, market: request.market });
 
+    // 1. Store the current pair/market for the popup to use
+    chrome.storage.local.set({
+      currentPair: request.pair,
+      currentMarket: request.market
+    }, () => {
+      // 2. Set the UI mode to 'popup' and apply the change
+      const newMode = 'popup';
+      chrome.storage.local.set({ [UIMODE_KEY]: newMode }, () => {
+        applyUIMode(newMode);
+
+        // 3. Open the chat widget in a new popup window
+        const popupUrl = chrome.runtime.getURL(`chat-widget.html?pair=${encodeURIComponent(request.pair || 'UNKNOWN')}&market=${encodeURIComponent(request.market || 'Perps')}`);
+        chrome.windows.create({
+          url: popupUrl,
+          type: 'popup',
+          width: 420,
+          height: 620,
+        });
+
+        // 4. Close the side panel gracefully
+        if (sender.tab && sender.tab.windowId) {
+           chrome.sidePanel.close({ windowId: sender.tab.windowId });
+        }
+        sendResponse({ success: true });
+      });
+    });
+    return true; // Indicate this is an async response
+  }
+
+  // This case is now effectively deprecated by the one above.
+  if (request.action === 'switchToPopupMode') {
+    console.log('[BG] switchToPopupMode');
     // Store the current pair/market for the popup to use
     chrome.storage.local.set({
-      currentPair: request.pair || 'UNKNOWN',
-      currentMarket: request.market || 'Perps',
-      [UIMODE_KEY]: 'popup'
-    }, () => {
-      // Apply UI mode setting to use popup
-      applyUIMode('popup')
-
-      // No need for notification - user will click the extension icon
-
-      sendResponse({ success: true })
-    })
-    return true
+      currentPair: request.pair,
+      currentMarket: request.market
+    });
+    // Apply UI mode setting to use popup
+    applyUIMode('popup')
+    sendResponse({ success: true })
+    return true;
   }
 
   if (request.action === "openStandaloneChat") {
