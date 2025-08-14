@@ -69,7 +69,7 @@ class HyperliquidChat {
     this.walletAddress = ""
     this.messages = []
     this.supabase = null
-    this.jwtToken = null
+    this.jwToken = null
     // Add HL names state
     this.availableNames = []
     this.selectedName = ''
@@ -82,7 +82,7 @@ class HyperliquidChat {
 
   async init() {
     console.log("Initializing HyperliquidChat...")
-    
+
     // Load stored JWT and wallet info from Chrome storage
     await this.loadStoredAuth()
 
@@ -106,32 +106,32 @@ class HyperliquidChat {
         console.warn("Failed to get market info from active tab:", error)
       }
     }
-    
+
     // First detect market info and create widget
     this.detectMarketInfo()
     this.createChatWidget()
     this.setupMessageListener()
     this.connectPort()
     this.startMarketMonitoring()
-    
+
     // Wait a moment for DOM to settle and market detection to complete
     await new Promise(resolve => setTimeout(resolve, 1000))
-    
+
     // Load chat history immediately (read-only mode) - Supabase is already initialized
     try {
       console.log("Initializing chat in read-only mode...")
       console.log(`Current trading pair: ${this.currentPair}, market: ${this.currentMarket}`)
-      
+
       if (window.IS_STANDALONE_CHAT) {
         this.showChat();
       }
-      
+
       await this.loadChatHistoryWithRetry()
       console.log("Chat history loaded successfully")
-      
+
       this.subscribeBroadcast() // Can still receive real-time messages
       console.log("Broadcast subscription active")
-      
+
       console.log("Read-only chat initialized successfully")
     } catch (error) {
       console.error("Failed to initialize read-only chat:", error)
@@ -145,7 +145,7 @@ class HyperliquidChat {
 
   detectMarketInfo() {
     // console.log("Detecting market info...")
-    
+
     // Allow override when running in standalone tab
     if (window.CHAT_PAIR_OVERRIDE) {
       this.currentPair = window.CHAT_PAIR_OVERRIDE;
@@ -153,11 +153,11 @@ class HyperliquidChat {
       // console.log(`✅ Using overrides - Pair: "${this.currentPair}", Market: "${this.currentMarket}"`)
       return;
     }
-    
+
     // Detect trading pair using the specific coinInfo selector
     let pairElement = document.querySelector("#coinInfo > div > div:nth-child(2) > div:nth-child(1) > div > div > div > div:nth-child(2) > div")
     // console.log("Primary pair element:", pairElement)
-    
+
     // Fallback selectors if the primary one fails
     if (!pairElement || !pairElement.textContent.trim()) {
       // console.log("Primary selector failed, trying fallbacks...")
@@ -167,11 +167,11 @@ class HyperliquidChat {
                    document.querySelector("h1") // fallback to main heading
       // console.log("Fallback pair element:", pairElement)
     }
-    
+
     if (pairElement) {
       const newPair = pairElement.textContent.trim()
       // console.log(`Raw pair text: "${newPair}"`)
-      
+
       if (newPair && newPair !== this.currentPair) {
         // console.log(`Trading pair changed: "${this.currentPair}" -> "${newPair}"`)
         this.currentPair = newPair
@@ -187,7 +187,7 @@ class HyperliquidChat {
     // console.log("Spot detection element:", spotElement)
     const newMarket = spotElement && spotElement.textContent.includes("Spot") ? "Spot" : "Perps"
     // console.log(`Detected market type: "${newMarket}"`)
-    
+
     if (newMarket !== this.currentMarket) {
       // console.log(`Market type changed: "${this.currentMarket}" -> "${newMarket}"`)
       this.currentMarket = newMarket
@@ -195,13 +195,13 @@ class HyperliquidChat {
 
     const roomId = `${this.currentPair}_${this.currentMarket}`
     // console.log(`Current room ID: "${roomId}"`)
-    
+
     // Fallback if no pair detected
     if (!this.currentPair) {
       this.currentPair = "UNKNOWN"
       console.warn("❌ Could not detect trading pair, using UNKNOWN")
     }
-    
+
     // console.log(`✅ Final market info - Pair: "${this.currentPair}", Market: "${this.currentMarket}", Room: "${roomId}"`)
   }
 
@@ -269,7 +269,7 @@ class HyperliquidChat {
   getChatHTML() {
     const roomId = `${this.currentPair}_${this.currentMarket}`
     const isConnected = !!this.walletAddress
-    
+
     return `
       <div class="hl-chat-container ${this.isVisible ? "visible" : ""}">
         <div class="hl-chat-header">
@@ -287,12 +287,12 @@ class HyperliquidChat {
             <button class="hl-chat-close" id="closeChat">×</button>
           </div>
         </div>
-        
+
         <div class="hl-chat-content">
           <div class="hl-chat-messages" id="chatMessages">
             ${this.renderMessages()}
           </div>
-          
+
           ${!isConnected ? `
           <div class="hl-chat-auth-bar" id="chatAuthBar">
             <div class="hl-auth-message">
@@ -320,7 +320,7 @@ class HyperliquidChat {
           </div>
           `}
         </div>
-        
+
         <div class="hl-chat-toggle" id="chatToggle">
           <span>💬</span>
         </div>
@@ -330,16 +330,16 @@ class HyperliquidChat {
 
   renderMessages() {
     console.log(`Rendering ${this.messages.length} messages`)
-    
+
     if (this.messages.length === 0) {
       console.log("No messages to render")
       return ""
     }
-    
+
     const rendered = this.messages
       .map((msg, index) => {
         console.log(`Rendering message ${index + 1}:`, { content: msg.content, address: msg.address })
-        
+
         const isOwn = msg.address === this.walletAddress
         const displayName = msg.name ? msg.name : this.formatAddress(msg.address)
         const messageHTML = `
@@ -354,7 +354,7 @@ class HyperliquidChat {
         return messageHTML
       })
       .join("")
-      
+
     console.log(`✅ Rendered HTML for ${this.messages.length} messages (${rendered.length} chars)`)
     return rendered
   }
@@ -553,42 +553,64 @@ class HyperliquidChat {
     });
   }
 
-
   async connectWallet() {
     try {
       console.log("Starting wallet connection...")
+
+      // If we already have stored authentication, just restore the UI state
+      if (this.walletAddress && this.jwToken) {
+        console.log("Using stored authentication for wallet:", this.walletAddress)
+
+        // Recreate the chat widget to show connected state
+        // Preserve market info in standalone mode before recreating
+        if (window.IS_STANDALONE_CHAT && window.CHAT_PAIR_OVERRIDE) {
+          this.currentPair = window.CHAT_PAIR_OVERRIDE
+          this.currentMarket = window.CHAT_MARKET_OVERRIDE || 'Perps'
+          console.log("Preserving market info before widget recreation:", this.currentPair, this.currentMarket)
+        }
+        this.createChatWidget()
+
+        // Reload chat history with authenticated user
+        console.log("Reloading chat history...")
+        await this.loadChatHistoryWithRetry()
+        console.log("Setting up broadcast subscription...")
+
+        // Unsubscribe from old channel first
+        if (this.realtimeChannel) {
+          this.supabase.removeChannel(this.realtimeChannel)
+        }
+        this.subscribeBroadcast()
+
+        console.log("Chat setup complete!")
+        return
+      }
+
+      // No stored auth, proceed with normal wallet connection flow
       const accounts = await (window.IS_STANDALONE_CHAT ? this.requestAccountsViaProxy() : this.requestAccounts())
       console.log("Accounts received:", accounts)
-      
+
       if (accounts && accounts.length > 0) {
         const newWalletAddress = accounts[0]
+        this.walletAddress = newWalletAddress
+        console.log("Wallet connected:", this.walletAddress)
 
-        // Check if this is the same wallet we already have stored
-        if (this.walletAddress === newWalletAddress && this.jwtToken) {
-          console.log("Wallet already connected with stored JWT:", this.walletAddress)
-        } else {
-          // New wallet or no stored JWT
-          this.walletAddress = newWalletAddress
-          console.log("Wallet connected:", this.walletAddress)
+        // Perform backend authentication to get JWT
+        await this.handleBackendAuth()
 
-          // Perform backend authentication to get JWT
-          await this.handleBackendAuth()
+        // Fetch HL names owned by this wallet and set default
+        try {
+          this.availableNames = await this.fetchHLNames(this.walletAddress)
+          console.log("Available HL names:", this.availableNames)
 
-          // Fetch HL names owned by this wallet and set default
-          try {
-            this.availableNames = await this.fetchHLNames(this.walletAddress)
-            console.log("Available HL names:", this.availableNames)
-
-            // Update stored names
-            await new Promise((resolve) => {
-              chrome.storage.local.set({
-                availableNames: this.availableNames,
-                selectedName: this.selectedName
-              }, resolve)
-            })
-          } catch (err) {
-            console.error("Failed to fetch HL names", err)
-          }
+          // Update stored names
+          await new Promise((resolve) => {
+            chrome.storage.local.set({
+              availableNames: this.availableNames,
+              selectedName: this.selectedName
+            }, resolve)
+          })
+        } catch (err) {
+          console.error("Failed to fetch HL names", err)
         }
 
         // Recreate the chat widget to show connected state
@@ -610,7 +632,7 @@ class HyperliquidChat {
           this.supabase.removeChannel(this.realtimeChannel)
         }
         this.subscribeBroadcast()
-        
+
         console.log("Chat setup complete!")
       } else {
         alert("No accounts returned. Please ensure your wallet is unlocked and try again.")
@@ -624,16 +646,16 @@ class HyperliquidChat {
   async loadStoredAuth() {
     try {
       const result = await new Promise((resolve) => {
-        chrome.storage.local.get(['jwtToken', 'walletAddress', 'availableNames', 'selectedName'], resolve)
+        chrome.storage.local.get(['jwToken', 'walletAddress', 'availableNames', 'selectedName'], resolve)
       })
 
-      if (result.jwtToken && result.walletAddress) {
-        this.jwtToken = result.jwtToken
+      if (result.jwToken && result.walletAddress) {
+        this.jwToken = result.jwToken
         this.walletAddress = result.walletAddress
         this.availableNames = result.availableNames || []
         this.selectedName = result.selectedName || ''
         console.log('Loaded stored auth - wallet:', this.walletAddress)
-        console.log('Loaded stored JWT token')
+        console.log('Loaded stored JWT')
         return true
       }
     } catch (error) {
@@ -645,9 +667,9 @@ class HyperliquidChat {
   async clearStoredAuth() {
     try {
       await new Promise((resolve) => {
-        chrome.storage.local.remove(['jwtToken', 'walletAddress', 'availableNames', 'selectedName'], resolve)
+        chrome.storage.local.remove(['jwToken', 'walletAddress', 'availableNames', 'selectedName'], resolve)
       })
-      this.jwtToken = null
+      this.jwToken = null
       this.walletAddress = ""
       this.availableNames = []
       this.selectedName = ''
@@ -659,21 +681,21 @@ class HyperliquidChat {
 
   async handleBackendAuth() {
     // Check if we already have a valid JWT for this wallet
-    if (this.jwtToken && this.walletAddress) {
-      // Check if JWT is expired (JWT tokens are valid for 24 hours)
+    if (this.jwToken && this.walletAddress) {
+      // Check if JWT is expired (JWTs are valid for 24 hours)
       try {
-        const tokenData = JSON.parse(atob(this.jwtToken.split('.')[1]))
+        const tokenData = JSON.parse(atob(this.jwToken.split('.')[1]))
         const now = Math.floor(Date.now() / 1000)
         if (tokenData.exp && tokenData.exp > now) {
-          console.log('Using existing valid JWT token for wallet:', this.walletAddress)
+          console.log('Using existing valid JWT for wallet:', this.walletAddress)
           return
         } else {
-          console.log('JWT token expired, will request new one')
-          this.jwtToken = null
+          console.log('JWT expired, will request new one')
+          this.jwToken = null
         }
       } catch (error) {
-        console.warn('Failed to parse JWT token, will request new one:', error)
-        this.jwtToken = null
+        console.warn('Failed to parse JWT, will request new one:', error)
+        this.jwToken = null
       }
     }
 
@@ -697,12 +719,12 @@ class HyperliquidChat {
       }
 
       const data = await resp.json()
-      this.jwtToken = data.token
+      this.jwToken = data.token
 
       // Store JWT and wallet info in Chrome storage
       await new Promise((resolve) => {
         chrome.storage.local.set({
-          jwtToken: this.jwtToken,
+          jwToken: this.jwToken,
           walletAddress: this.walletAddress,
           availableNames: this.availableNames,
           selectedName: this.selectedName
@@ -713,7 +735,7 @@ class HyperliquidChat {
     } catch (error) {
       console.warn('Backend auth failed, continuing in read-only mode:', error.message)
       // Continue without JWT - user can still read messages but not send
-      this.jwtToken = null
+      this.jwToken = null
     }
   }
 
@@ -725,7 +747,7 @@ class HyperliquidChat {
         return // Success, exit retry loop
       } catch (error) {
         console.error(`Chat history load attempt ${attempt} failed:`, error)
-        
+
         if (attempt === maxRetries) {
           // Final attempt failed
           const messagesContainer = document.getElementById("chatMessages")
@@ -734,7 +756,7 @@ class HyperliquidChat {
           }
           throw error
         }
-        
+
         // Wait before retry (exponential backoff)
         await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
       }
@@ -745,7 +767,7 @@ class HyperliquidChat {
     const roomId = `${this.currentPair}_${this.currentMarket}`
     console.log(`Loading chat history for room: "${roomId}"`)
     console.log(`Current pair: "${this.currentPair}", market: "${this.currentMarket}"`)
-    
+
     // Make sure we have a valid room ID
     if (!this.currentPair || this.currentPair === "UNKNOWN") {
       console.warn("Cannot load chat history - trading pair not detected yet")
@@ -757,13 +779,13 @@ class HyperliquidChat {
       console.error("Supabase client not initialized!")
       return
     }
-    
+
     console.log("Supabase client is initialized")
-    
+
     try {
       console.log(`Querying Supabase for room: "${roomId}"`)
       console.log(`Query: SELECT * FROM messages WHERE room = '${roomId}' ORDER BY timestamp ASC`)
-      
+
       const { data, error } = await this.supabase
         .from('messages')
         .select('*')
@@ -780,7 +802,7 @@ class HyperliquidChat {
           hint: error.hint,
           code: error.code
         })
-        
+
         // Show error in chat if it's a critical issue
         const messagesContainer = document.getElementById("chatMessages")
         if (messagesContainer && error.code !== 'PGRST116') { // PGRST116 = table doesn't exist, handle gracefully
@@ -790,7 +812,7 @@ class HyperliquidChat {
       }
 
       console.log(`Query successful! Found ${data ? data.length : 0} messages for room "${roomId}"`)
-      
+
       if (data && data.length > 0) {
         console.log('First message sample:', data[0])
         console.log('All message contents:', data.map(m => ({ content: m.content, timestamp: m.timestamp })))
@@ -801,11 +823,11 @@ class HyperliquidChat {
       // Always set messages (even if empty array)
       this.messages = data || []
       console.log(`Set this.messages to array with ${this.messages.length} items`)
-      
+
       // Update the UI
       const messagesContainer = document.getElementById("chatMessages")
       console.log('Messages container element:', messagesContainer)
-      
+
       if (messagesContainer) {
         if (this.messages.length === 0) {
           const noMessagesHTML = `<div class="hl-loading">No messages yet in ${roomId}. Be the first to chat!</div>`
@@ -822,7 +844,7 @@ class HyperliquidChat {
         console.error("Messages container not found in DOM!")
         console.log('Available elements with IDs:', Array.from(document.querySelectorAll('[id]')).map(el => el.id))
       }
-      
+
     } catch (err) {
       console.error('Failed to load chat history:', err)
       throw err // Re-throw to be handled by caller
@@ -832,14 +854,14 @@ class HyperliquidChat {
   subscribeBroadcast() {
     const roomId = `${this.currentPair}_${this.currentMarket}`
     console.log(`Subscribing to broadcast for room: ${roomId}`)
-    
+
     const channel = this.supabase.channel(`room_${roomId}`, {
       config: { broadcast: { ack: true } },
     })
       .on('broadcast', { event: 'new-message' }, (payload) => {
         console.log('Received broadcast message:', payload)
         const msg = payload.payload
-        
+
         // Only show messages for the current room and not from ourselves
         if (msg.room === roomId && msg.address !== this.walletAddress) {
           console.log('Adding message to UI:', msg)
@@ -868,22 +890,22 @@ class HyperliquidChat {
     }
 
     if (!content || !this.walletAddress) return
-    
+
     // Check if we can send messages (wallet connected, backend optional)
     if (!this.walletAddress) {
       alert('Please connect your wallet to send messages')
       return
     }
-    
-    // If no JWT token, warn about read-only mode
-    if (!this.jwtToken) {
+
+    // If no JWT, warn about read-only mode
+    if (!this.jwToken) {
       alert('Backend server unavailable. Messages cannot be sent in read-only mode.\n\nYou can still read messages, but sending requires the backend server.')
       return
     }
 
     const timestamp = Date.now()
     const nonce = timestamp + Math.random().toString(36).substr(2, 9) // unique nonce
-    
+
     const messageObj = {
       address: this.walletAddress,
       name: this.selectedName,
@@ -922,7 +944,7 @@ class HyperliquidChat {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.jwtToken}`
+          'Authorization': `Bearer ${this.jwToken}`
         },
         body: JSON.stringify({
           signature: signature,
@@ -959,14 +981,14 @@ class HyperliquidChat {
 
     } catch (error) {
       console.error('Failed to send message:', error)
-      
+
       // Remove optimistic message on error
       this.messages = this.messages.filter(msg => 
         !(msg.timestamp === timestamp && msg.address === this.walletAddress)
       )
       document.getElementById("chatMessages").innerHTML = this.renderMessages()
       this.scrollToBottom()
-      
+
       // Show user-friendly error messages
       let errorMessage = error.message
       if (errorMessage.includes('rate limit')) {
@@ -976,7 +998,7 @@ class HyperliquidChat {
       } else if (errorMessage.includes('signature mismatch')) {
         errorMessage = 'Signature verification failed. Please reconnect your wallet.'
       }
-      
+
       alert(`Failed to send message: ${errorMessage}`)
     }
   }
@@ -994,26 +1016,26 @@ class HyperliquidChat {
 
       if (oldRoomId !== newRoomId) {
         console.log(`Room changed: ${oldRoomId} -> ${newRoomId}`)
-        
+
         // Clear current messages
         this.messages = []
-        
+
         // Update chat header immediately
         this.updateChatHeader()
-        
+
         // Show loading state
         const messagesContainer = document.getElementById("chatMessages")
         if (messagesContainer) {
           messagesContainer.innerHTML = '<div class="hl-loading">Switching to ' + newRoomId + '...</div>'
         }
-        
+
         // Clean up old subscription
         if (this.supabase && this.realtimeChannel) {
           console.log(`Unsubscribing from old room: ${oldRoomId}`)
           this.supabase.removeChannel(this.realtimeChannel)
           this.realtimeChannel = null
         }
-        
+
         // Notify standalone windows
         chrome.runtime.sendMessage({ action: 'roomChange', pair: this.currentPair, market: this.currentMarket })
 
@@ -1030,7 +1052,7 @@ class HyperliquidChat {
             }
           })
         }
-        
+
         // Update input placeholder if wallet is connected
         const inputElement = document.getElementById("messageInput")
         if (inputElement) {
@@ -1047,13 +1069,13 @@ class HyperliquidChat {
 
     if (pairElement) pairElement.textContent = this.currentPair
     if (marketElement) marketElement.textContent = `${this.currentMarket} Chat`
-    
+
     // Update input placeholder with current room (only if connected)
     const roomId = `${this.currentPair}_${this.currentMarket}`
     if (inputElement) {
       inputElement.placeholder = `Chat with ${roomId} traders...`
     }
-    
+
     console.log(`Chat header updated for room: ${roomId}`)
   }
 
