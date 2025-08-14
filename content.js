@@ -484,8 +484,15 @@ class HyperliquidChat {
             action: "switchToPopupAndOpen", // New, more descriptive action
             pair: this.currentPair,
             market: this.currentMarket,
+          }, (response) => {
+            // Close the side panel after the background script has opened the popup
+            // Note: Background script opens the popup, content script closes itself
+            if (response && response.success) {
+              setTimeout(() => {
+                window.close();
+              }, 100); // Small delay to ensure popup is opened
+            }
           });
-          // DO NOT call window.close() here. The background script will close the panel.
         })
       }
     }
