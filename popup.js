@@ -60,6 +60,12 @@ document.addEventListener("DOMContentLoaded", () => {
     chrome.runtime.sendMessage({ action: 'toggleUIMode' }, (resp) => {
       if (resp && resp.mode) {
         updateUIModeDisplay(resp.mode);
+
+        // If switching to sidepanel mode, close the popup
+        if (resp.mode === 'sidepanel') {
+          console.log('Switching to sidepanel mode, closing popup');
+          window.close();
+        }
       }
     })
   })
@@ -104,7 +110,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     })
   })
-  
+
   // Listen for live updates from the background script
   chrome.runtime.onMessage.addListener((request) => {
     if (request.action === 'uiModeChanged') {

@@ -80,22 +80,53 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     chrome.storage.local.get([UIMODE_KEY], (result) => {
       const current = result[UIMODE_KEY] || 'sidepanel';
       const next = current === 'sidepanel' ? 'popup' : 'sidepanel';
-      chrome.storage.local.set({ [UIMODE_KEY]: next }, () => {
-        applyUIMode(next);
 
-        // Broadcast the mode change to all active tabs/popups
-        chrome.tabs.query({}, (tabs) => {
-          tabs.forEach(tab => {
-            chrome.tabs.sendMessage(tab.id, { action: 'uiModeChanged', newMode: next }).catch(() => { /* ignore errors for tabs without the content script */ });
+      if (next === 'popup') {
+        // Switching to popup mode - use the existing switchToPopupAndOpen logic
+        // For now, just change the mode and let the user manually open the popup
+        chrome.storage.local.set({ [UIMODE_KEY]: next }, () => {
+          applyUIMode(next);
+
+          // Broadcast the mode change to all active tabs/popups
+          chrome.tabs.query({}, (tabs) => {
+            tabs.forEach(tab => {
+              chrome.tabs.sendMessage(tab.id, { action: 'uiModeChanged', newMode: next }).catch(() => { /* ignore errors for tabs without the content script */ });
+            });
           });
-        });
 
-        sendResponse({ success: true, mode: next });
-      });
+          sendResponse({ success: true, mode: next });
+        });
+      } else {
+        // Switching to sidepanel mode - open side panel and close popup
+        chrome.storage.local.set({ [UIMODE_KEY]: next }, () => {
+          applyUIMode(next);
+
+          // Broadcast the mode change to all active tabs/popups
+          chrome.tabs.query({}, (tabs) => {
+            tabs.forEach(tab => {
+              chrome.tabs.sendMessage(tab.id, { action: 'uiModeChanged', newMode: next }).catch(() => { /* ignore errors for tabs without the content script */ });
+            });
+          });
+
+          // Open side panel on the active Hyperliquid tab
+          chrome.tabs.query({ url: 'https://app.hyperliquid.xyz/*' }, (tabs) => {
+            const targetTab = tabs.find(t => t.active) || tabs[0];
+            if (targetTab?.id) {
+              chrome.sidePanel.setOptions({
+                tabId: targetTab.id,
+                path: 'chat-widget.html',
+                enabled: true
+              }).catch(console.error);
+            }
+          });
+
+          sendResponse({ success: true, mode: next });
+        });
+      }
     });
     return true; // Async response
   }
-  
+
   if (request.action === "switchToPopupAndOpen") {
     console.log('[BG] switchToPopupAndOpen', { pair: request.pair, market: request.market });
 
@@ -119,16 +150,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
 
         // 4. Close the side panel gracefully
-        if (sender.tab && sender.tab.windowId) {
-           chrome.sidePanel.close({ windowId: sender.tab.windowId });
-        }
+        // Side panel will close when the content script calls window.close()
         sendResponse({ success: true });
       });
     });
-    return true; // Indicate this is an async response
+    return true; // async response
   }
 
-  // This case is now effectively deprecated by the one above.
+  // Case now effectively deprecated by the one above.
   if (request.action === 'switchToPopupMode') {
     console.log('[BG] switchToPopupMode');
     // Store the current pair/market for the popup to use
