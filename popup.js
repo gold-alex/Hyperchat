@@ -57,8 +57,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const btn = document.getElementById('toggleMode');
     if (label && btn) {
         const isSidePanel = mode === 'sidepanel';
-        label.textContent = isSidePanel ? 'Current Mode: Side Panel' : 'Current Mode: Popup';
-        btn.textContent = isSidePanel ? 'Switch to Popup Mode' : 'Switch to Side Panel Mode';
+        label.textContent = isSidePanel ? 'Side Panel' : 'Floating';
+        btn.textContent = isSidePanel ? 'Switch to Floating' : 'Switch to Side Panel';
     }
   }
 
