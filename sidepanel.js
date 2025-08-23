@@ -53,9 +53,42 @@ async function initializeSupabase() {
     initializeChat();
 }
 
+// Restore wallet connection state from Chrome storage
+async function restoreWalletConnection() {
+    try {
+        console.log("Checking for stored wallet connection in side panel...");
+
+        const result = await new Promise((resolve) => {
+            chrome.storage.local.get(['walletConnected', 'walletAddress', 'availableNames', 'selectedName', 'hasBackendAuth'], (data) => {
+                resolve(data);
+            });
+        });
+
+        if (result.walletConnected && result.walletAddress) {
+            console.log("Restoring wallet connection in side panel:", result.walletAddress);
+
+            // Restore wallet state
+            walletAddress = result.walletAddress;
+            availableNames = result.availableNames || [];
+            selectedName = result.selectedName || '';
+            hasBackendAuth = result.hasBackendAuth || false;
+
+            console.log("Wallet connection restored in side panel successfully");
+        } else {
+            console.log("No stored wallet connection found in side panel");
+        }
+    } catch (error) {
+        console.error("Failed to restore wallet connection in side panel:", error);
+    }
+}
+
 // Initialize chat UI
-function initializeChat() {
+async function initializeChat() {
     console.log('Initializing side panel chat...');
+
+    // Restore wallet connection state if it exists
+    await restoreWalletConnection();
+
     createChatUI();
     setupEventListeners();
     loadChatHistory();
@@ -422,6 +455,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         availableNames = [];
         selectedName = '';
         hasBackendAuth = false;
+
+        // Clear stored wallet state
+        chrome.storage.local.remove(['walletConnected', 'walletAddress', 'availableNames', 'selectedName', 'hasBackendAuth']).catch(console.error);
+
         createChatUI(); // Recreate UI with disconnected state
         setupEventListeners();
         // Reload messages after UI recreation

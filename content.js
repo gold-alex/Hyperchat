@@ -93,6 +93,9 @@ class HyperliquidChat {
     // Wait a moment for DOM to settle and market detection to complete
     await new Promise(resolve => setTimeout(resolve, 1000))
 
+    // Restore wallet connection state if it exists
+    await this.restoreWalletConnection()
+
     // Load chat history immediately (read-only mode) - Supabase is already initialized
     try {
       console.log("Initializing chat in read-only mode...")
@@ -472,6 +475,82 @@ class HyperliquidChat {
     });
   }
 
+  async restoreWalletConnection() {
+    try {
+      console.log("Checking for stored wallet connection...")
+
+      const result = await new Promise((resolve) => {
+        chrome.storage.local.get(['walletConnected', 'walletAddress', 'availableNames', 'selectedName', 'hasBackendAuth'], (data) => {
+          resolve(data);
+        });
+      });
+
+      if (result.walletConnected && result.walletAddress) {
+        console.log("Restoring wallet connection:", result.walletAddress);
+
+        // Restore wallet state
+        this.walletAddress = result.walletAddress;
+        this.availableNames = result.availableNames || [];
+        this.selectedName = result.selectedName || '';
+
+        // Try to restore backend auth if it was previously successful
+        if (result.hasBackendAuth) {
+          try {
+            await this.handleBackendAuth();
+            console.log("Backend auth restored successfully");
+          } catch (error) {
+            console.warn("Failed to restore backend auth:", error.message);
+          }
+        }
+
+        // Recreate the chat widget to show connected state
+        this.createChatWidget();
+
+        // Notify side panel about restored wallet connection
+        chrome.runtime.sendMessage({
+          action: 'walletConnected',
+          walletAddress: this.walletAddress,
+          availableNames: this.availableNames,
+          selectedName: this.selectedName,
+          hasBackendAuth: !!this.jwtToken
+        }).catch(() => {
+          // Side panel might not be open, that's OK
+        });
+
+        console.log("Wallet connection restored successfully");
+      } else {
+        console.log("No stored wallet connection found");
+      }
+    } catch (error) {
+      console.error("Failed to restore wallet connection:", error);
+    }
+  }
+
+  async disconnectWallet() {
+    console.log("Disconnecting wallet...");
+
+    // Clear local state
+    this.walletAddress = '';
+    this.availableNames = [];
+    this.selectedName = '';
+    this.jwtToken = null;
+
+    // Clear stored wallet state
+    chrome.storage.local.remove(['walletConnected', 'walletAddress', 'availableNames', 'selectedName', 'hasBackendAuth']).catch(console.error);
+
+    // Recreate the chat widget to show disconnected state
+    this.createChatWidget();
+
+    // Notify side panel about wallet disconnection
+    chrome.runtime.sendMessage({
+      action: 'walletDisconnected'
+    }).catch(() => {
+      // Side panel might not be open, that's OK
+    });
+
+    console.log("Wallet disconnected successfully");
+  }
+
   async connectWallet() {
     try {
       console.log("Starting wallet connection...")
@@ -501,6 +580,15 @@ class HyperliquidChat {
 
         // Recreate the chat widget to show connected state
         this.createChatWidget()
+
+        // Store wallet connection state in Chrome storage for persistence
+        chrome.storage.local.set({
+          walletAddress: this.walletAddress,
+          availableNames: this.availableNames,
+          selectedName: this.selectedName,
+          hasBackendAuth: !!this.jwtToken,
+          walletConnected: true
+        }).catch(console.error);
 
         // Notify side panel about wallet connection
         chrome.runtime.sendMessage({
