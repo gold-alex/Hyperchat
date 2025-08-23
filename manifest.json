@@ -3,11 +3,11 @@
   "name": "Hyperliquid Chat",
   "version": "1.0.0",
   "description": "Chat with traders on Hyperliquid",
-  "permissions": ["activeTab", "storage", "scripting", "sidePanel"],
+  "permissions": ["activeTab", "storage", "scripting", "sidePanel", "contextMenus"],
   "host_permissions": [
     "https://app.hyperliquid.xyz/*",
     "https://gwxiafgocfqjyapgqfnl.supabase.co/*",
-    "http://localhost:3001/*"
+    "http://localhost:3002/*"
   ],
   "content_scripts": [
     {
@@ -24,7 +24,7 @@
     "default_title": "Hyperliquid Chat"
   },
   "side_panel": {
-    "default_path": "chat-widget.html"
+    "default_path": "sidepanel.html"
   },
   "web_accessible_resources": [
     {

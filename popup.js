@@ -25,17 +25,30 @@ document.addEventListener("DOMContentLoaded", () => {
       ">
         Switch to Popup
       </button>
-      <button id="openChat" style="
-        background: #50d2c1;
-        color: #0a1f1c;
-        border: none;
-        padding: 8px 16px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-weight: bold;
-      ">
-        Open Chat
-      </button>
+      <div style="display: flex; gap: 8px; flex-direction: column;">
+        <button id="openChat" style="
+          background: #50d2c1;
+          color: #0a1f1c;
+          border: none;
+          padding: 8px 16px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-weight: bold;
+        ">
+          Open Floating Chat
+        </button>
+        <button id="openSidePanel" style="
+          background: #072723;
+          color: #50d2c1;
+          border: 1px solid #50d2c1;
+          padding: 8px 16px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-weight: bold;
+        ">
+          Open Side Panel
+        </button>
+      </div>
     </div>
   `
 
@@ -108,6 +121,18 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         })
       }
+    })
+  })
+
+  document.getElementById("openSidePanel").addEventListener("click", () => {
+    chrome.sidePanel.open({ windowId: chrome.windows.WINDOW_ID_CURRENT }).then(() => {
+      window.close()
+    }).catch(() => {
+      // If side panel API not available, fallback to setting behavior
+      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).then(() => {
+        alert('Side panel enabled! Click the extension icon to open it.')
+        window.close()
+      }).catch(console.error)
     })
   })
 

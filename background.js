@@ -1,45 +1,20 @@
 // Background service worker
-const connectedTabs = new Set()
-const UIMODE_KEY = 'uiMode'
-
-function applyUIMode(mode) {
-  const openPanel = mode === 'sidepanel'
-  console.log('[BG] applyUIMode', { mode, openPanel })
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: openPanel }).catch((e)=>{
-    console.warn('[BG] setPanelBehavior error', e?.message || e)
-  })
-}
-
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('[BG] Hyperliquid Chat extension installed')
-  chrome.storage.local.get([UIMODE_KEY], (result) => {
-    const mode = result[UIMODE_KEY] || 'sidepanel'
-    if (!result[UIMODE_KEY]) {
-      chrome.storage.local.set({ [UIMODE_KEY]: mode })
-    }
-    applyUIMode(mode)
-  })
-})
+  console.log("Hyperliquid Chat extension installed")
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error)
 
-chrome.runtime.onStartup.addListener(() => {
-  chrome.storage.local.get([UIMODE_KEY], (result) => {
-    const mode = result[UIMODE_KEY] || 'sidepanel'
-    applyUIMode(mode)
+  // Create context menu for floating chat
+  chrome.contextMenus.create({
+    id: 'openFloatingChat',
+    title: 'Open floating chat',
+    contexts: ['action']
   })
-})
 
-chrome.runtime.onConnect.addListener((port) => {
-  if (port.name === 'hl-content') {
-    const tabId = port.sender && port.sender.tab && port.sender.tab.id
-    console.log('[BG] onConnect hl-content', { tabId })
-    if (tabId) connectedTabs.add(tabId)
-    console.log('[BG] connectedTabs size', connectedTabs.size, Array.from(connectedTabs))
-    port.onDisconnect.addListener(() => {
-      console.log('[BG] onDisconnect hl-content', { tabId })
-      if (tabId) connectedTabs.delete(tabId)
-      console.log('[BG] connectedTabs size', connectedTabs.size, Array.from(connectedTabs))
-    })
-  }
+  chrome.contextMenus.create({
+    id: 'toggleChatMode',
+    title: 'Switch to popup mode',
+    contexts: ['action']
+  })
 })
 
 // Handle messages from content script
@@ -58,144 +33,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true
   }
 
-  if (request.action === 'getUIMode') {
-    console.log('[BG] getUIMode')
-    chrome.storage.local.get([UIMODE_KEY], (result) => {
-      sendResponse({ mode: result[UIMODE_KEY] || 'sidepanel' })
-    })
-    return true
-  }
-
-  if (request.action === 'setUIMode' && (request.mode === 'sidepanel' || request.mode === 'popup')) {
-    console.log('[BG] setUIMode', { mode: request.mode })
-    chrome.storage.local.set({ [UIMODE_KEY]: request.mode }, () => {
-      applyUIMode(request.mode)
-      sendResponse({ success: true, mode: request.mode })
-    })
-    return true
-  }
-
-  if (request.action === 'toggleUIMode') {
-    console.log('[BG] toggleUIMode');
-    chrome.storage.local.get([UIMODE_KEY], (result) => {
-      const current = result[UIMODE_KEY] || 'sidepanel';
-      const next = current === 'sidepanel' ? 'popup' : 'sidepanel';
-
-      if (next === 'popup') {
-        // Switching to popup mode - use the existing switchToPopupAndOpen logic
-        // For now, just change the mode and let the user manually open the popup
-        chrome.storage.local.set({ [UIMODE_KEY]: next }, () => {
-          applyUIMode(next);
-
-          // Broadcast the mode change to all active tabs/popups
-          chrome.tabs.query({}, (tabs) => {
-            tabs.forEach(tab => {
-              chrome.tabs.sendMessage(tab.id, { action: 'uiModeChanged', newMode: next }).catch(() => { /* ignore errors for tabs without the content script */ });
-            });
-          });
-
-          sendResponse({ success: true, mode: next });
-        });
-      } else {
-        // Switching to sidepanel mode - open side panel and close popup
-        chrome.storage.local.set({ [UIMODE_KEY]: next }, () => {
-          applyUIMode(next);
-
-          // Broadcast the mode change to all active tabs/popups
-          chrome.tabs.query({}, (tabs) => {
-            tabs.forEach(tab => {
-              chrome.tabs.sendMessage(tab.id, { action: 'uiModeChanged', newMode: next }).catch(() => { /* ignore errors for tabs without the content script */ });
-            });
-          });
-
-          // Open side panel on the active Hyperliquid tab
-          chrome.tabs.query({ url: 'https://app.hyperliquid.xyz/*' }, (tabs) => {
-            const targetTab = tabs.find(t => t.active) || tabs[0];
-            if (targetTab?.id) {
-              chrome.sidePanel.setOptions({
-                tabId: targetTab.id,
-                path: 'chat-widget.html',
-                enabled: true
-              }).catch(console.error);
-            }
-          });
-
-          sendResponse({ success: true, mode: next });
-        });
-      }
-    });
-    return true; // Async response
-  }
-
-  if (request.action === "switchToPopupAndOpen") {
-    console.log('[BG] switchToPopupAndOpen', { pair: request.pair, market: request.market });
-
-    // 1. Store the current pair/market for the popup to use
-    chrome.storage.local.set({
-      currentPair: request.pair,
-      currentMarket: request.market
-    }, () => {
-      // 2. Set the UI mode to 'popup' and apply the change
-      const newMode = 'popup';
-      chrome.storage.local.set({ [UIMODE_KEY]: newMode }, () => {
-        applyUIMode(newMode);
-
-        // 3. Open the chat widget in a new popup window
-        const popupUrl = chrome.runtime.getURL(`chat-widget.html?pair=${encodeURIComponent(request.pair || 'UNKNOWN')}&market=${encodeURIComponent(request.market || 'Perps')}`);
-        chrome.windows.create({
-          url: popupUrl,
-          type: 'popup',
-          width: 420,
-          height: 620,
-        });
-
-        // 4. Close the side panel gracefully
-        // Side panel will close when the content script calls window.close()
-        sendResponse({ success: true });
-      });
-    });
-    return true; // async response
-  }
-
-  // Case now effectively deprecated by the one above.
-  if (request.action === 'switchToPopupMode') {
-    console.log('[BG] switchToPopupMode');
-    // Store the current pair/market for the popup to use
-    chrome.storage.local.set({
-      currentPair: request.pair,
-      currentMarket: request.market
-    });
-    // Apply UI mode setting to use popup
-    applyUIMode('popup')
-    sendResponse({ success: true })
-    return true;
-  }
-
   if (request.action === "openStandaloneChat") {
     const url = chrome.runtime.getURL(`chat-widget.html?pair=${encodeURIComponent(request.pair||'UNKNOWN')}&market=${encodeURIComponent(request.market||'Perps')}`)
     chrome.tabs.create({ url })
     sendResponse({ success: true })
-    return true
-  }
-
-  if (request.action === 'getCurrentMarketInfo') {
-    console.log('[BG] getCurrentMarketInfo')
-    chrome.tabs.query({ url: 'https://app.hyperliquid.xyz/*' }, (tabs) => {
-      const targetTab = tabs.find(t => t.active) || tabs[0]
-      if (!targetTab?.id) {
-        sendResponse({ error: 'No Hyperliquid tab found' })
-        return
-      }
-      chrome.tabs.sendMessage(targetTab.id, { action: 'getMarketInfo' }, (resp) => {
-        if (chrome.runtime.lastError || !resp) {
-          console.warn('[BG] getCurrentMarketInfo failed', chrome.runtime.lastError?.message)
-          sendResponse({ error: 'Failed to get market info' })
-        } else {
-          console.log('[BG] getCurrentMarketInfo response', resp)
-          sendResponse(resp)
-        }
-      })
-    })
     return true
   }
 
@@ -208,152 +49,39 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (sender && sender.tab && sender.tab.id) {
       chrome.sidePanel.setOptions({
         tabId: sender.tab.id,
-        path: `chat-widget.html?pair=${encodeURIComponent(request.pair || 'UNKNOWN')}&market=${encodeURIComponent(request.market || 'Perps')}`,
+        path: `sidepanel.html?pair=${encodeURIComponent(request.pair || 'UNKNOWN')}&market=${encodeURIComponent(request.market || 'Perps')}`,
         enabled: true
       }).catch(console.error)
     }
     sendResponse({success:true})
     return true
   }
+})
 
-  // Proxy wallet requests coming from side panel to a Hyperliquid trade tab
-  if (request.action === 'proxyRequestAccounts') {
-    console.log('[BG] proxyRequestAccounts start', { connectedTabs: Array.from(connectedTabs) })
-    // Prefer any tab that has established a live port connection
-    const connected = Array.from(connectedTabs)
-    const tryTabId = connected.length > 0 ? connected[0] : null
-    const withTabs = (targetTabId) => {
-      console.log('[BG] proxyRequestAccounts withTabs', { targetTabId })
-      if (!targetTabId) {
-        sendResponse({ error: 'Open a Hyperliquid Trade tab to connect wallet' })
-        return
-      }
-      const sendToTab = (attempt = 1) => {
-        console.log('[BG] proxyRequestAccounts sendToTab attempt', { attempt, targetTabId })
-        chrome.tabs.sendMessage(targetTabId, { action: 'doRequestAccounts' }, (resp) => {
-          if (chrome.runtime.lastError || !resp) {
-            const lastErr = chrome.runtime.lastError && chrome.runtime.lastError.message
-            console.warn('[BG] proxyRequestAccounts sendMessage error', { attempt, lastErr, respPresent: !!resp })
-            if (attempt < 3) {
-              chrome.scripting.executeScript({ target: { tabId: targetTabId }, files: ['content.js'] }, () => {
-                const injErr = chrome.runtime.lastError && chrome.runtime.lastError.message
-                if (injErr) console.warn('[BG] executeScript error', injErr)
-                setTimeout(() => sendToTab(attempt + 1), 300)
-              })
-              return
-            }
-            sendResponse({ error: lastErr || 'No receiver in trade tab' })
-            return
-          }
-          console.log('[BG] proxyRequestAccounts response', resp)
-          sendResponse(resp)
-        })
-      }
-      sendToTab(1)
-    }
-
-    if (tryTabId) {
-      withTabs(tryTabId)
+// Handle context menu clicks
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === 'openFloatingChat') {
+    if (tab && tab.url && tab.url.includes('app.hyperliquid.xyz')) {
+      chrome.tabs.sendMessage(tab.id, { action: 'showChat' })
     } else {
-      // Fallback: search tabs by URL
-      chrome.tabs.query({ url: 'https://app.hyperliquid.xyz/*' }, (tabs) => {
-        console.log('[BG] proxyRequestAccounts fallback tabs', tabs.map(t=>({id:t.id, active:t.active, url:t.url})))
-        const targetTab = tabs.find(t => t.active) || tabs[0]
-        const id = targetTab && targetTab.id
-        if (id) {
-          withTabs(id)
-        } else {
-          console.log('[BG] proxyRequestAccounts no tabs found, opening trade tab')
-          chrome.tabs.create({ url: 'https://app.hyperliquid.xyz/trade' }, (newTab) => {
-            const newId = newTab && newTab.id
-            let attempts = 0
-            const waitForConnect = () => {
-              attempts += 1
-              console.log('[BG] waiting for content connect', { attempts, newId })
-              if (connectedTabs.has(newId)) {
-                withTabs(newId)
-                return
-              }
-              if (attempts >= 10) {
-                sendResponse({ error: 'Timed out waiting for Hyperliquid Trade tab' })
-                return
-              }
-              setTimeout(waitForConnect, 300)
-            }
-            waitForConnect()
-          })
-        }
-      })
+      chrome.tabs.create({ url: 'https://app.hyperliquid.xyz/trade' })
     }
-    return true
-  }
+  } else if (info.menuItemId === 'toggleChatMode') {
+    // Get current mode from storage
+    const result = await chrome.storage.local.get(['chatMode'])
+    const currentMode = result.chatMode || 'sidepanel'
+    const newMode = currentMode === 'sidepanel' ? 'popup' : 'sidepanel'
 
-  if (request.action === 'proxySignMessage') {
-    console.log('[BG] proxySignMessage start', { connectedTabs: Array.from(connectedTabs) })
-    const connected = Array.from(connectedTabs)
-    const tryTabId = connected.length > 0 ? connected[0] : null
-    const withTabs = (targetTabId) => {
-      console.log('[BG] proxySignMessage withTabs', { targetTabId })
-      if (!targetTabId) {
-        sendResponse({ error: 'Open a Hyperliquid Trade tab to sign' })
-        return
-      }
-      const sendToTab = (attempt = 1) => {
-        console.log('[BG] proxySignMessage sendToTab attempt', { attempt, targetTabId })
-        chrome.tabs.sendMessage(targetTabId, { action: 'doSignMessage', message: request.message }, (resp) => {
-          if (chrome.runtime.lastError || !resp) {
-            const lastErr = chrome.runtime.lastError && chrome.runtime.lastError.message
-            console.warn('[BG] proxySignMessage sendMessage error', { attempt, lastErr, respPresent: !!resp })
-            if (attempt < 3) {
-              chrome.scripting.executeScript({ target: { tabId: targetTabId }, files: ['content.js'] }, () => {
-                const injErr = chrome.runtime.lastError && chrome.runtime.lastError.message
-                if (injErr) console.warn('[BG] executeScript error', injErr)
-                setTimeout(() => sendToTab(attempt + 1), 300)
-              })
-              return
-            }
-            sendResponse({ error: lastErr || 'No receiver in trade tab for signing' })
-            return
-          }
-          console.log('[BG] proxySignMessage response', resp)
-          sendResponse(resp)
-        })
-      }
-      sendToTab(1)
-    }
+    // Save new mode
+    await chrome.storage.local.set({ chatMode: newMode })
 
-    if (tryTabId) {
-      withTabs(tryTabId)
+    // Update behavior
+    if (newMode === 'popup') {
+      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(console.error)
+      chrome.contextMenus.update('toggleChatMode', { title: 'Switch to side panel mode' })
     } else {
-      chrome.tabs.query({ url: 'https://app.hyperliquid.xyz/*' }, (tabs) => {
-        console.log('[BG] proxySignMessage fallback tabs', tabs.map(t=>({id:t.id, active:t.active, url:t.url})))
-        const targetTab = tabs.find(t => t.active) || tabs[0]
-        const id = targetTab && targetTab.id
-        if (id) {
-          withTabs(id)
-        } else {
-          console.log('[BG] proxySignMessage no tabs found, opening trade tab')
-          chrome.tabs.create({ url: 'https://app.hyperliquid.xyz/trade' }, (newTab) => {
-            const newId = newTab && newTab.id
-            let attempts = 0
-            const waitForConnect = () => {
-              attempts += 1
-              console.log('[BG] waiting for content connect (sign)', { attempts, newId })
-              if (connectedTabs.has(newId)) {
-                withTabs(newId)
-                return
-              }
-              if (attempts >= 10) {
-                sendResponse({ error: 'Timed out waiting for Hyperliquid Trade tab for signing' })
-                return
-              }
-              setTimeout(waitForConnect, 300)
-            }
-            waitForConnect()
-          })
-        }
-      })
+      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error)
+      chrome.contextMenus.update('toggleChatMode', { title: 'Switch to popup mode' })
     }
-    return true
   }
 })

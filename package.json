@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "rm -rf dist && mkdir -p dist && cp manifest.json background.js popup.html popup.js chat-widget.html chat-widget.js chromeStorageAdapter.js content.css content.js wallet-bridge.js supabase.js dist/",
+    "build": "node build.js",
+    "build:simple": "rm -rf dist && mkdir -p dist && cp manifest.json background.js popup.html popup.js chat-widget.html chat-widget.js sidepanel.html sidepanel.js wallet-bridge.js content.css content.js supabase.js dist/",
     "dev": "next dev",
     "lint": "next lint",
     "start": "next start",
@@ -74,6 +75,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "babel-jest": "^30.0.5",
+    "dotenv": "^16.6.1",
     "jest": "^30.0.5",
     "jest-environment-jsdom": "^30.0.5",
     "postcss": "^8.5",

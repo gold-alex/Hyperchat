@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Hyperliquid Chat - Side Panel</title>
+  <link rel="stylesheet" href="content.css" />
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #0a1f1c;
+      color: #f6fefb;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Override floating widget styles for side panel */
+    .hl-chat-widget {
+      position: static !important;
+      top: auto !important;
+      right: auto !important;
+      width: 100% !important;
+      height: 100vh !important;
+      min-width: auto !important;
+      min-height: auto !important;
+      resize: none !important;
+    }
+
+    .hl-chat-container {
+      width: 100% !important;
+      height: 100% !important;
+      min-width: auto !important;
+      min-height: auto !important;
+      transform: none !important;
+      transition: none !important;
+      border-radius: 0 !important;
+      border: none !important;
+      box-shadow: none !important;
+    }
+
+    .hl-chat-container.visible {
+      transform: none !important;
+    }
+
+    .hl-chat-toggle {
+      display: none !important;
+    }
+
+    /* Make header more compact for side panel */
+    .hl-chat-header {
+      padding: 8px 12px !important;
+    }
+
+    .hl-chat-pair {
+      font-size: 14px !important;
+    }
+
+    /* Remove popout button in side panel, add close button */
+    .hl-chat-popout {
+      display: none !important;
+    }
+
+    .hl-sidepanel-close {
+      background: none;
+      border: none;
+      color: #a0a0a0;
+      font-size: 16px;
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 3px;
+      transition: background-color 0.2s;
+    }
+
+    .hl-sidepanel-close:hover {
+      background: #1a3d37;
+      color: #f6fefb;
+    }
+  </style>
+</head>
+<body>
+  <div id="sidepanel-root"></div>
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>
