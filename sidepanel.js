@@ -94,7 +94,7 @@ async function initializeChat() {
     loadChatHistory();
     subscribeBroadcast();
 
-    // Listen for room changes from content script
+    // Listen for room changes from content script and mode changes
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (request.action === 'roomChange') {
             currentPair = request.pair;
@@ -105,6 +105,9 @@ async function initializeChat() {
                 supabase.removeChannel(realtimeChannel);
             }
             subscribeBroadcast();
+        } else if (request.action === 'closeSidePanel') {
+            // Close the side panel when switching to floating mode
+            window.close();
         }
     });
 }

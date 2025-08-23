@@ -987,6 +987,11 @@ class HyperliquidChat {
         this.currentPair = request.pair || this.currentPair
         this.currentMarket = request.market || this.currentMarket
         this.showChat()
+      } else if (request.action === 'hideChat' && !window.IS_STANDALONE_CHAT) {
+        this.hideChat()
+      } else if (request.action === 'getCurrentRoom') {
+        sendResponse({ pair: this.currentPair, market: this.currentMarket })
+        return true
       } else if (request.action === 'requestWalletConnection') {
         // Handle wallet connection request from side panel
         this.connectWallet()
