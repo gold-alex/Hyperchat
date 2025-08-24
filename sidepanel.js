@@ -53,6 +53,53 @@ async function initializeSupabase() {
     initializeChat();
 }
 
+// Check if we're on trade page and navigate if not
+async function checkAndNavigateToTrade() {
+    try {
+        // Get the current active tab
+        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        
+        if (activeTab && (!activeTab.url || !activeTab.url.includes('app.hyperliquid.xyz/trade'))) {
+            console.log('Not on trade page, navigating...');
+            
+            // Show a loading message while navigating
+            const root = document.getElementById('sidepanel-root');
+            if (root) {
+                root.innerHTML = `
+                    <div style="padding: 20px; text-align: center;">
+                        <h3>Navigating to Hyperliquid...</h3>
+                        <p>Please wait while we load the trade page</p>
+                    </div>
+                `;
+            }
+            
+            // Navigate to trade page
+            await chrome.tabs.update(activeTab.id, { url: 'https://app.hyperliquid.xyz/trade' });
+            
+            // Wait for the page to load
+            await new Promise((resolve) => {
+                const listener = (tabId, info) => {
+                    if (tabId === activeTab.id && info.status === 'complete') {
+                        chrome.tabs.onUpdated.removeListener(listener);
+                        // Add extra delay for content script to initialize
+                        setTimeout(resolve, 2000);
+                    }
+                };
+                chrome.tabs.onUpdated.addListener(listener);
+                
+                // Timeout after 10 seconds
+                setTimeout(resolve, 10000);
+            });
+            
+            console.log('Navigation complete');
+        } else {
+            console.log('Already on trade page');
+        }
+    } catch (error) {
+        console.error('Error checking/navigating to trade page:', error);
+    }
+}
+
 // Restore wallet connection state from Chrome storage
 async function restoreWalletConnection() {
     try {
@@ -86,12 +133,26 @@ async function restoreWalletConnection() {
 async function initializeChat() {
     console.log('Initializing side panel chat...');
 
+    // Check if we need to navigate to trade page
+    await checkAndNavigateToTrade();
+
     // Restore wallet connection state if it exists
     await restoreWalletConnection();
 
+    // Try to sync with content script first
+    await syncWithContentScript();
+
     createChatUI();
     setupEventListeners();
-    loadChatHistory();
+    
+    // Only load from database if we didn't get messages from content script
+    if (messages.length === 0) {
+        loadChatHistory();
+    } else {
+        updateMessagesUI();
+        scrollToBottom();
+    }
+    
     subscribeBroadcast();
 
     // Listen for room changes from content script and mode changes
@@ -108,8 +169,93 @@ async function initializeChat() {
         } else if (request.action === 'closeSidePanel') {
             // Close the side panel when switching to floating mode
             window.close();
+        } else if (request.action === 'syncSidepanel') {
+            // Receive sync data from content script
+            if (request.pair && request.pair !== 'UNKNOWN') {
+                currentPair = request.pair;
+                currentMarket = request.market || 'Perps';
+                messages = request.messages || [];
+                updateChatHeader();
+                updateMessagesUI();
+                scrollToBottom();
+                
+                // Re-subscribe to the new room
+                if (realtimeChannel) {
+                    supabase.removeChannel(realtimeChannel);
+                }
+                subscribeBroadcast();
+            }
         }
     });
+    
+    // Periodically sync with content script to stay up to date
+    setInterval(async () => {
+        await syncWithContentScript();
+    }, 5000); // Sync every 5 seconds
+}
+
+// Sync with content script to get current state
+async function syncWithContentScript() {
+    try {
+        // Try to get the tab that has Hyperliquid open
+        const tabs = await chrome.tabs.query({ url: "*://app.hyperliquid.xyz/trade*" });
+        
+        if (tabs && tabs.length > 0) {
+            // Try each tab until we get a response
+            for (const tab of tabs) {
+                try {
+                    const response = await new Promise((resolve, reject) => {
+                        chrome.tabs.sendMessage(tab.id, { action: 'getCurrentRoom' }, (response) => {
+                            if (chrome.runtime.lastError) {
+                                reject(chrome.runtime.lastError);
+                            } else {
+                                resolve(response);
+                            }
+                        });
+                    });
+                    
+                    if (response && response.pair && response.pair !== 'UNKNOWN') {
+                        // Update our state with content script's data
+                        currentPair = response.pair;
+                        currentMarket = response.market || 'Perps';
+                        
+                        if (response.messages) {
+                            messages = response.messages;
+                        }
+                        
+                        if (response.walletAddress) {
+                            walletAddress = response.walletAddress;
+                            availableNames = response.availableNames || [];
+                            selectedName = response.selectedName || '';
+                            hasBackendAuth = true;
+                        }
+                        
+                        console.log('✅ Synced with content script from tab:', {
+                            tabId: tab.id,
+                            pair: currentPair,
+                            market: currentMarket,
+                            messageCount: messages.length,
+                            walletConnected: !!walletAddress
+                        });
+                        
+                        // Successfully synced, no need to check other tabs
+                        return;
+                    }
+                } catch (error) {
+                    console.log(`Could not sync with tab ${tab.id}:`, error.message);
+                }
+            }
+        }
+        
+        // If we couldn't sync from any tab, use URL params as fallback
+        console.log('Using URL params as fallback:', { 
+            pair: initialPair, 
+            market: initialMarket 
+        });
+        
+    } catch (error) {
+        console.log('Error in syncWithContentScript:', error);
+    }
 }
 
 // Create chat UI

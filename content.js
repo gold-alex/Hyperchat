@@ -132,23 +132,69 @@ class HyperliquidChat {
       return;
     }
 
-    // Detect trading pair using the specific coinInfo selector
-    let pairElement = document.querySelector("#coinInfo > div > div:nth-child(2) > div:nth-child(1) > div > div > div > div:nth-child(2) > div")
-    console.log("Primary pair element:", pairElement)
+    let pairElement = null;
+    let newPair = "";
 
-    // Fallback selectors if the primary one fails
+    // Try desktop selector first
+    pairElement = document.querySelector("#coinInfo > div > div:nth-child(2) > div:nth-child(1) > div > div > div > div:nth-child(2) > div")
+    console.log("Desktop selector result:", pairElement)
+
+    // Try mobile selector if desktop fails
     if (!pairElement || !pairElement.textContent.trim()) {
-      console.log("Primary selector failed, trying fallbacks...")
+      console.log("Desktop selector failed, trying mobile...")
+      pairElement = document.querySelector("#root > div:nth-child(2) > div:nth-child(3) > div > div:nth-child(1) > div:nth-child(1) > div > div:nth-child(1) > div > div > div > div:nth-child(2) > div")
+      console.log("Mobile selector result:", pairElement)
+    }
+
+    // Try icon-based detection as fallback
+    if (!pairElement || !pairElement.textContent.trim()) {
+      console.log("XPath selectors failed, trying icon-based detection...")
+      
+      // Look for coin icon and get text after it
+      const coinIcon = document.querySelector('img[alt][src*="/coins/"]');
+      if (coinIcon) {
+        console.log(`Found coin icon with alt: "${coinIcon.alt}"`)
+        
+        // Navigate up to find container with market text
+        let container = coinIcon.closest('div[style*="display"]');
+        if (container && container.parentElement) {
+          // Look for text in parent or siblings
+          const textElements = container.parentElement.querySelectorAll('div');
+          for (const el of textElements) {
+            const text = el.textContent.trim();
+            // Look for pattern like "HYPE-USD" or contains USD
+            if (text && !text.includes('Welcome') && (text.includes('-USD') || text.match(/^[A-Z]+-USD[C]?$/))) {
+              pairElement = el;
+              console.log(`Found pair via icon navigation: "${text}"`)
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Additional fallback selectors
+    if (!pairElement || !pairElement.textContent.trim()) {
+      console.log("All primary methods failed, trying generic fallbacks...")
       pairElement = document.querySelector(".sc-bjfHbI.bFBYgR") ||
                    document.querySelector("[data-testid='trading-pair']") || 
-                   document.querySelector(".trading-pair") ||
-                   document.querySelector("h1") // fallback to main heading
+                   document.querySelector(".trading-pair")
       console.log("Fallback pair element:", pairElement)
     }
 
     if (pairElement) {
-      const newPair = pairElement.textContent.trim()
+      newPair = pairElement.textContent.trim()
       console.log(`Raw pair text: "${newPair}"`)
+      
+      // Clean up text - remove any "Welcome to Hyperliquid" contamination
+      if (newPair.includes("Welcome")) {
+        // Extract just the trading pair (looks for XXX-USD pattern)
+        const match = newPair.match(/([A-Z]+[-]USD[C]?)/);
+        if (match) {
+          newPair = match[1];
+          console.log(`Extracted pair from contaminated text: "${newPair}"`)
+        }
+      }
 
       if (newPair && newPair !== this.currentPair) {
         console.log(`Trading pair changed: "${this.currentPair}" -> "${newPair}"`)
@@ -936,8 +982,27 @@ class HyperliquidChat {
           this.realtimeChannel = null
         }
 
-        // Notify standalone windows
-        chrome.runtime.sendMessage({ action: 'roomChange', pair: this.currentPair, market: this.currentMarket })
+        // Notify all extensions (background, sidepanel, standalone windows)
+        chrome.runtime.sendMessage({ 
+          action: 'roomChange', 
+          pair: this.currentPair, 
+          market: this.currentMarket 
+        }).catch(() => {
+          // Extension might not be ready, that's OK
+        })
+        
+        // Also directly notify the sidepanel with full sync data
+        chrome.runtime.sendMessage({
+          action: 'syncSidepanel',
+          pair: this.currentPair,
+          market: this.currentMarket,
+          messages: this.messages,
+          walletAddress: this.walletAddress,
+          availableNames: this.availableNames,
+          selectedName: this.selectedName
+        }).catch(() => {
+          // Sidepanel might not be open, that's OK
+        })
 
         // Load new room (works with or without wallet)
         if (this.supabase) {
@@ -945,6 +1010,17 @@ class HyperliquidChat {
           this.loadChatHistoryWithRetry().then(() => {
             this.subscribeBroadcast()
             console.log(`Successfully switched to room: ${newRoomId}`)
+            
+            // Send updated messages to sidepanel after loading
+            chrome.runtime.sendMessage({
+              action: 'syncSidepanel',
+              pair: this.currentPair,
+              market: this.currentMarket,
+              messages: this.messages,
+              walletAddress: this.walletAddress,
+              availableNames: this.availableNames,
+              selectedName: this.selectedName
+            }).catch(() => {})
           }).catch(error => {
             console.error("Failed to load new room:", error)
             if (messagesContainer) {
@@ -986,11 +1062,18 @@ class HyperliquidChat {
       } else if (request.action === 'showChat' && !window.IS_STANDALONE_CHAT) {
         this.currentPair = request.pair || this.currentPair
         this.currentMarket = request.market || this.currentMarket
-        this.showChat()
+        this.showChatDirect() // Direct show without mode check for explicit requests
       } else if (request.action === 'hideChat' && !window.IS_STANDALONE_CHAT) {
         this.hideChat()
       } else if (request.action === 'getCurrentRoom') {
-        sendResponse({ pair: this.currentPair, market: this.currentMarket })
+        sendResponse({ 
+          pair: this.currentPair, 
+          market: this.currentMarket,
+          messages: this.messages,
+          walletAddress: this.walletAddress,
+          availableNames: this.availableNames,
+          selectedName: this.selectedName
+        })
         return true
       } else if (request.action === 'requestWalletConnection') {
         // Handle wallet connection request from side panel
@@ -1033,6 +1116,14 @@ class HyperliquidChat {
             this.subscribeBroadcast()
           })
         }
+      } else if (request.action === 'syncMessages') {
+        // Sync messages with side panel
+        sendResponse({ 
+          messages: this.messages,
+          currentPair: this.currentPair,
+          currentMarket: this.currentMarket
+        })
+        return true
       }
     })
   }
@@ -1073,6 +1164,17 @@ class HyperliquidChat {
   }
 
   showChat() {
+    // Check if we're in sidepanel mode first
+    chrome.storage.local.get(['chatMode'], (result) => {
+      const mode = result.chatMode || 'sidepanel'
+      if (mode === 'floating') {
+        this.showChatDirect()
+      }
+    })
+  }
+
+  showChatDirect() {
+    // Direct show without mode check - used when explicitly requested
     this.isVisible = true
     let widget = document.getElementById('hyperliquid-chat-widget')
     if (!widget) {

@@ -2,26 +2,53 @@
 chrome.runtime.onInstalled.addListener(async () => {
   console.log("Hyperliquid Chat extension installed")
 
-  // Get current mode from storage or default to sidepanel
+  // Default to sidepanel mode
+  await chrome.storage.local.set({ chatMode: 'sidepanel' })
+  
+  // Enable side panel to open on action click
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error)
+  
+  // Create context menu for mode switching
+  chrome.contextMenus.create({
+    id: 'toggleChatMode',
+    title: 'Switch to floating mode',
+    contexts: ['action']
+  })
+})
+
+// Handle extension icon click - only needed for floating mode
+chrome.action.onClicked.addListener(async (tab) => {
+  console.log("Extension icon clicked")
+  
+  // Get current mode
   const result = await chrome.storage.local.get(['chatMode'])
   const currentMode = result.chatMode || 'sidepanel'
-
-  // Set initial behavior and context menu title
-  if (currentMode === 'sidepanel') {
-    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error)
-    chrome.contextMenus.create({
-      id: 'toggleChatMode',
-      title: 'Switch to floating mode',
-      contexts: ['action']
-    })
-  } else {
-    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(console.error)
-    chrome.contextMenus.create({
-      id: 'toggleChatMode',
-      title: 'Switch to side panel mode',
-      contexts: ['action']
-    })
+  
+  // Only handle clicks in floating mode
+  // Sidebar mode is handled by setPanelBehavior and the sidebar itself will navigate
+  if (currentMode === 'floating') {
+    if (tab.url && tab.url.includes('app.hyperliquid.xyz/trade')) {
+      // Show floating chat
+      chrome.tabs.sendMessage(tab.id, { action: 'showChat' }).catch(() => {
+        console.log("Content script not ready")
+      })
+    } else {
+      // Navigate and show chat after
+      chrome.tabs.update(tab.id, { url: 'https://app.hyperliquid.xyz/trade' }, (updatedTab) => {
+        chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
+          if (tabId === tab.id && info.status === 'complete') {
+            chrome.tabs.onUpdated.removeListener(listener)
+            setTimeout(() => {
+              chrome.tabs.sendMessage(tab.id, { action: 'showChat' }).catch(() => {
+                console.log("Content script not ready yet")
+              })
+            }, 1000)
+          }
+        })
+      })
+    }
   }
+  // For sidebar mode, setPanelBehavior will open it and sidebar will handle navigation
 })
 
 // Handle messages from content script
@@ -50,7 +77,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'roomChange' || request.action === 'showChat') {
     chrome.tabs.query({}, (tabs) => {
       tabs.forEach(tab => {
-        chrome.tabs.sendMessage(tab.id, request)
+        chrome.tabs.sendMessage(tab.id, request).catch(() => {})
       })
     })
     if (sender && sender.tab && sender.tab.id) {
@@ -63,61 +90,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({success:true})
     return true
   }
-
-  // Handle popup UI mode requests
-  if (request.action === 'getUIMode') {
-    chrome.storage.local.get(['chatMode'], (result) => {
-      const mode = result.chatMode || 'sidepanel'
-      sendResponse({ mode: mode })
+  
+  if (request.action === 'syncSidepanel') {
+    // Forward sync message to sidepanel
+    chrome.runtime.sendMessage(request).catch(() => {
+      // Sidepanel might not be open
     })
+    sendResponse({success:true})
     return true
   }
 
-  if (request.action === 'toggleUIMode') {
-    chrome.storage.local.get(['chatMode'], async (result) => {
-      const currentMode = result.chatMode || 'sidepanel'
-      const newMode = currentMode === 'sidepanel' ? 'floating' : 'sidepanel'
-
-      await chrome.storage.local.set({ chatMode: newMode })
-
-            // Update side panel behavior and switch modes
-      if (newMode === 'sidepanel') {
-        chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error)
-        chrome.contextMenus.update('toggleChatMode', { title: 'Switch to floating mode' })
-        
-        // Hide floating chat on all tabs with Hyperliquid and set side panel path
-        chrome.tabs.query({ url: "*://app.hyperliquid.xyz/*" }, (tabs) => {
-          tabs.forEach(tab => {
-            chrome.tabs.sendMessage(tab.id, { action: 'hideChat' }).catch(() => {
-              // Tab might not have content script loaded, that's OK
-            })
-            
-            // Get room info and set side panel path for each tab
-            chrome.tabs.sendMessage(tab.id, { action: 'getCurrentRoom' }, (response) => {
-              if (response && response.pair && response.market) {
-                chrome.sidePanel.setOptions({
-                  tabId: tab.id,
-                  path: `sidepanel.html?pair=${encodeURIComponent(response.pair)}&market=${encodeURIComponent(response.market)}`,
-                  enabled: true
-                }).catch(console.error)
-              }
-            })
-          })
-        })
-      } else {
-        chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(console.error)
-        chrome.contextMenus.update('toggleChatMode', { title: 'Switch to side panel mode' })
-        
-        // Send message to close side panel when switching to floating mode
-        chrome.runtime.sendMessage({ action: 'closeSidePanel' }).catch(() => {
-          // Side panel might not be open, that's OK
-        })
-      }
-
-      sendResponse({ mode: newMode })
-    })
-    return true
-  }
 })
 
 // Handle context menu clicks
@@ -131,64 +113,69 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     // Save new mode
     await chrome.storage.local.set({ chatMode: newMode })
 
-        if (newMode === 'floating') {
-      // Switch to floating mode: close side panel and open floating chat
-      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(console.error)
+    if (newMode === 'floating') {
+      // Switch to floating mode
       chrome.contextMenus.update('toggleChatMode', { title: 'Switch to side panel mode' })
+      
+      // Disable auto-open side panel on action click
+      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(console.error)
       
       // Send message to close side panel
       chrome.runtime.sendMessage({ action: 'closeSidePanel' }).catch(() => {
         // Side panel might not be open, that's OK
       })
       
-      // Open floating chat if on Hyperliquid page
+      // Hide any open side panels and show floating chat
       if (tab && tab.url && tab.url.includes('app.hyperliquid.xyz')) {
+        // Show floating chat
         chrome.tabs.sendMessage(tab.id, { action: 'showChat' })
-      } else {
-        chrome.tabs.create({ url: 'https://app.hyperliquid.xyz/trade' })
       }
-        } else {
-      // Switch to side panel mode: hide floating chat and open side panel
-      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error)
+    } else {
+      // Switch to side panel mode
       chrome.contextMenus.update('toggleChatMode', { title: 'Switch to floating mode' })
       
-      // Hide floating chat on current tab and get room info
-      if (tab && tab.url && tab.url.includes('app.hyperliquid.xyz')) {
-        chrome.tabs.sendMessage(tab.id, { action: 'hideChat' }).catch(() => {
-          // Tab might not have content script loaded, that's OK
-        })
-        
-        // Get current room info from content script and set side panel path
-        chrome.tabs.sendMessage(tab.id, { action: 'getCurrentRoom' }, (response) => {
-          if (response && response.pair && response.market) {
-            chrome.sidePanel.setOptions({
-              tabId: tab.id,
-              path: `sidepanel.html?pair=${encodeURIComponent(response.pair)}&market=${encodeURIComponent(response.market)}`,
-              enabled: true
-            }).catch(console.error)
-          } else {
-            // Fallback to default room
-            chrome.sidePanel.setOptions({
-              tabId: tab.id,
-              path: `sidepanel.html?pair=UNKNOWN&market=Perps`,
-              enabled: true
-            }).catch(console.error)
-          }
-          
-          // Open side panel after setting path
-          chrome.sidePanel.open({ windowId: chrome.windows.WINDOW_ID_CURRENT }).catch(console.error)
-        })
-      } else {
-        // Not on Hyperliquid page, open with default room
+      // Enable auto-open side panel on action click
+      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error)
+      
+      // First, open side panel for current tab immediately (while we have user gesture)
+      if (tab && tab.url && tab.url.includes('app.hyperliquid.xyz/trade')) {
         chrome.sidePanel.setOptions({
           tabId: tab.id,
           path: `sidepanel.html?pair=UNKNOWN&market=Perps`,
           enabled: true
-        }).catch(console.error)
-        
-        // Open side panel
-        chrome.sidePanel.open({ windowId: chrome.windows.WINDOW_ID_CURRENT }).catch(console.error)
+        }).then(() => {
+          // Open immediately while we have the user gesture
+          chrome.sidePanel.open({ tabId: tab.id }).catch(console.error)
+        })
       }
+      
+      // Hide floating chat on all Hyperliquid tabs
+      chrome.tabs.query({ url: "*://app.hyperliquid.xyz/*" }, async (tabs) => {
+        for (const hlTab of tabs) {
+          // Hide floating chat
+          chrome.tabs.sendMessage(hlTab.id, { action: 'hideChat' }).catch(() => {
+            // Tab might not have content script loaded, that's OK
+          })
+          
+          // Set up side panel for other tabs (but don't try to open them)
+          if (hlTab.url && hlTab.url.includes('app.hyperliquid.xyz/trade') && hlTab.id !== tab.id) {
+            try {
+              // Try to get current room info
+              const response = await chrome.tabs.sendMessage(hlTab.id, { action: 'getCurrentRoom' }).catch(() => null)
+              const pair = response?.pair || 'UNKNOWN'
+              const market = response?.market || 'Perps'
+              
+              await chrome.sidePanel.setOptions({
+                tabId: hlTab.id,
+                path: `sidepanel.html?pair=${encodeURIComponent(pair)}&market=${encodeURIComponent(market)}`,
+                enabled: true
+              })
+            } catch (error) {
+              console.error("Error setting up side panel:", error)
+            }
+          }
+        }
+      })
     }
   }
 })
