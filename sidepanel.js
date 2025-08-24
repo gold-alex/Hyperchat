@@ -20,6 +20,7 @@ let selectedName = '';
 let autoScroll = true;
 let realtimeChannel = null;
 let hasBackendAuth = false;
+let hasLoadedInitialData = false;
 
 // Initialize Supabase
 async function initializeSupabase() {
@@ -61,17 +62,6 @@ async function checkAndNavigateToTrade() {
         
         if (activeTab && (!activeTab.url || !activeTab.url.includes('app.hyperliquid.xyz/trade'))) {
             console.log('Not on trade page, navigating...');
-            
-            // Show a loading message while navigating
-            const root = document.getElementById('sidepanel-root');
-            if (root) {
-                root.innerHTML = `
-                    <div style="padding: 20px; text-align: center;">
-                        <h3>Navigating to Hyperliquid...</h3>
-                        <p>Please wait while we load the trade page</p>
-                    </div>
-                `;
-            }
             
             // Navigate to trade page
             await chrome.tabs.update(activeTab.id, { url: 'https://app.hyperliquid.xyz/trade' });
@@ -132,6 +122,17 @@ async function restoreWalletConnection() {
 // Initialize chat UI
 async function initializeChat() {
     console.log('Initializing side panel chat...');
+    
+    // Show initial loading screen
+    const root = document.getElementById('sidepanel-root');
+    if (root) {
+        root.innerHTML = `
+            <div style="padding: 20px; text-align: center;">
+                <h3>Navigating to Hyperliquid...</h3>
+                <p>Please wait while we load the trade page</p>
+            </div>
+        `;
+    }
 
     // Check if we need to navigate to trade page
     await checkAndNavigateToTrade();
@@ -139,21 +140,25 @@ async function initializeChat() {
     // Restore wallet connection state if it exists
     await restoreWalletConnection();
 
-    // Try to sync with content script first
-    await syncWithContentScript();
-
-    createChatUI();
-    setupEventListeners();
+    // Keep trying to sync until we get valid data
+    let syncAttempts = 0;
+    const maxAttempts = 20; // Try for up to 10 seconds
     
-    // Only load from database if we didn't get messages from content script
-    if (messages.length === 0) {
-        loadChatHistory();
-    } else {
-        updateMessagesUI();
-        scrollToBottom();
+    while (!hasLoadedInitialData && syncAttempts < maxAttempts) {
+        await syncWithContentScript();
+        
+        if (!hasLoadedInitialData) {
+            // Wait 500ms before trying again
+            await new Promise(resolve => setTimeout(resolve, 500));
+            syncAttempts++;
+        }
     }
     
-    subscribeBroadcast();
+    // If we still don't have data after all attempts, use defaults but don't show UNKNOWN
+    if (!hasLoadedInitialData) {
+        console.log('Could not sync with content script, waiting for data...');
+        // Don't create UI yet - wait for sync from periodic interval
+    }
 
     // Listen for room changes from content script and mode changes
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -175,15 +180,25 @@ async function initializeChat() {
                 currentPair = request.pair;
                 currentMarket = request.market || 'Perps';
                 messages = request.messages || [];
-                updateChatHeader();
-                updateMessagesUI();
-                scrollToBottom();
                 
-                // Re-subscribe to the new room
-                if (realtimeChannel) {
-                    supabase.removeChannel(realtimeChannel);
+                // If UI hasn't been created yet, create it now
+                if (!hasLoadedInitialData) {
+                    hasLoadedInitialData = true;
+                    createChatUI();
+                    setupEventListeners();
+                    loadChatHistory();
+                    subscribeBroadcast();
+                } else {
+                    updateChatHeader();
+                    updateMessagesUI();
+                    scrollToBottom();
+                    
+                    // Re-subscribe to the new room
+                    if (realtimeChannel) {
+                        supabase.removeChannel(realtimeChannel);
+                    }
+                    subscribeBroadcast();
                 }
-                subscribeBroadcast();
             }
         }
     });
@@ -191,7 +206,15 @@ async function initializeChat() {
     // Periodically sync with content script to stay up to date
     setInterval(async () => {
         await syncWithContentScript();
-    }, 5000); // Sync every 5 seconds
+        
+        // If we haven't created the UI yet and now have data, create it
+        if (!document.querySelector('.hl-chat-widget') && hasLoadedInitialData) {
+            createChatUI();
+            setupEventListeners();
+            loadChatHistory();
+            subscribeBroadcast();
+        }
+    }, 1000); // Check every second
 }
 
 // Sync with content script to get current state
@@ -238,6 +261,22 @@ async function syncWithContentScript() {
                             walletConnected: !!walletAddress
                         });
                         
+                        // If this is first load, add a delay before creating UI
+                        if (!hasLoadedInitialData) {
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            hasLoadedInitialData = true;
+                            
+                            // Now create the UI since we have data
+                            createChatUI();
+                            setupEventListeners();
+                            loadChatHistory();
+                            subscribeBroadcast();
+                        } else {
+                            // Already loaded, just update UI
+                            updateChatHeader();
+                            updateMessagesUI();
+                        }
+                        
                         // Successfully synced, no need to check other tabs
                         return;
                     }
@@ -247,11 +286,9 @@ async function syncWithContentScript() {
             }
         }
         
-        // If we couldn't sync from any tab, use URL params as fallback
-        console.log('Using URL params as fallback:', { 
-            pair: initialPair, 
-            market: initialMarket 
-        });
+        // If we couldn't sync from any tab, keep showing "Waiting for Hyperliquid..."
+        // Don't update currentPair/currentMarket to avoid showing UNKNOWN
+        console.log('Waiting for Hyperliquid page to load...');
         
     } catch (error) {
         console.log('Error in syncWithContentScript:', error);
@@ -270,7 +307,7 @@ function createChatUI() {
                 <div class="hl-chat-header">
                     <div class="hl-chat-title">
                         <span class="hl-chat-pair">${currentPair}</span>
-                        <span class="hl-chat-market">${currentMarket} Chat</span>
+                        <span class="hl-chat-market">${currentMarket ? currentMarket + ' Chat' : ''}</span>
                     </div>
                     <div class="hl-chat-autoscroll">
                         <input type="checkbox" id="autoScrollCheckbox" ${autoScroll ? "checked" : ""}>
@@ -558,7 +595,7 @@ function updateChatHeader() {
     const marketElement = document.querySelector('.hl-chat-market');
 
     if (pairElement) pairElement.textContent = currentPair;
-    if (marketElement) marketElement.textContent = `${currentMarket} Chat`;
+    if (marketElement) marketElement.textContent = currentMarket ? `${currentMarket} Chat` : '';
 }
 
 // Utility functions
@@ -595,10 +632,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         availableNames = request.availableNames || [];
         selectedName = request.selectedName || '';
         hasBackendAuth = request.hasBackendAuth || false;
-        createChatUI(); // Recreate UI with connected state
-        setupEventListeners();
-        // Reload messages after UI recreation
-        loadChatHistory();
+        
+        // Only recreate UI if we have valid pair data
+        if (hasLoadedInitialData && currentPair !== 'UNKNOWN') {
+            createChatUI(); // Recreate UI with connected state
+            setupEventListeners();
+            // Reload messages after UI recreation
+            loadChatHistory();
+        }
     } else if (request.action === 'walletDisconnected') {
         walletAddress = '';
         availableNames = [];
@@ -608,10 +649,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         // Clear stored wallet state
         chrome.storage.local.remove(['walletConnected', 'walletAddress', 'availableNames', 'selectedName', 'hasBackendAuth']).catch(console.error);
 
-        createChatUI(); // Recreate UI with disconnected state
-        setupEventListeners();
-        // Reload messages after UI recreation
-        loadChatHistory();
+        // Only recreate UI if we have valid pair data
+        if (hasLoadedInitialData && currentPair !== 'UNKNOWN') {
+            createChatUI(); // Recreate UI with disconnected state
+            setupEventListeners();
+            // Reload messages after UI recreation
+            loadChatHistory();
+        }
     }
 });
 
