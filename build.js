@@ -18,7 +18,8 @@ const sourceFiles = [
   'wallet-bridge.js',
   'content.css',
   'content.js',
-  'supabase.js'
+  'supabase.js',
+  'pnl-service.js'
 ];
 
 // Environment variables to substitute

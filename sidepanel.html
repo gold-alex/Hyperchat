@@ -15,6 +15,81 @@
       overflow: hidden;
     }
 
+    /* PnL Badge Styles */
+    .hl-pnl-badge {
+      font-size: 11px;
+      font-weight: bold;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.3);
+      white-space: nowrap;
+      transition: all 0.3s ease;
+    }
+
+    /* Casino-like animations for PnL changes */
+    @keyframes pnlFlash {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.2); filter: brightness(1.5); }
+      100% { transform: scale(1); }
+    }
+
+    @keyframes pnlSlotSpin {
+      0% { transform: translateY(0); opacity: 1; }
+      50% { transform: translateY(-10px); opacity: 0; }
+      51% { transform: translateY(10px); opacity: 0; }
+      100% { transform: translateY(0); opacity: 1; }
+    }
+
+    @keyframes pnlGlow {
+      0% { box-shadow: 0 0 0 rgba(74, 222, 128, 0); }
+      50% { box-shadow: 0 0 10px rgba(74, 222, 128, 0.8); }
+      100% { box-shadow: 0 0 0 rgba(74, 222, 128, 0); }
+    }
+
+    @keyframes pnlGlowRed {
+      0% { box-shadow: 0 0 0 rgba(248, 113, 113, 0); }
+      50% { box-shadow: 0 0 10px rgba(248, 113, 113, 0.8); }
+      100% { box-shadow: 0 0 0 rgba(248, 113, 113, 0); }
+    }
+
+    .hl-pnl-badge.pnl-updating {
+      animation: pnlSlotSpin 0.5s ease-in-out;
+    }
+
+    .hl-pnl-badge.pnl-increase {
+      animation: pnlFlash 0.6s ease-in-out, pnlGlow 0.6s ease-in-out;
+    }
+
+    .hl-pnl-badge.pnl-decrease {
+      animation: pnlFlash 0.6s ease-in-out, pnlGlowRed 0.6s ease-in-out;
+    }
+
+    /* Right-align message header items */
+    .hl-message-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+    }
+    
+    .hl-message-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .hl-message-header-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+    }
+
+    .hl-message-time {
+      opacity: 0.7;
+      white-space: nowrap;
+    }
+
     /* Override floating widget styles for side panel */
     .hl-chat-widget {
       position: static !important;

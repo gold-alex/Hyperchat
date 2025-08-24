@@ -21,12 +21,22 @@ let autoScroll = true;
 let realtimeChannel = null;
 let hasBackendAuth = false;
 let hasLoadedInitialData = false;
+let pnlService = null;
+let userPnLCache = new Map();
+let pnlUpdateInterval = null;
 
 // Initialize Supabase
 async function initializeSupabase() {
     console.log('Importing Supabase library...');
 
     try {
+        // Import PnL service first
+        await import(chrome.runtime.getURL('pnl-service.js'));
+        if (typeof window.PnLService !== 'undefined') {
+            pnlService = new window.PnLService();
+            console.log('✅ P&L service initialized');
+        }
+
         const supabaseModule = await import(chrome.runtime.getURL('supabase.js'));
         console.log('✅ Supabase module imported');
 
@@ -166,6 +176,15 @@ async function initializeChat() {
             currentPair = request.pair;
             currentMarket = request.market;
             updateChatHeader();
+            
+            // Clear messages and P&L cache when changing rooms
+            messages = [];
+            userPnLCache.clear();
+            if (pnlService) {
+                pnlService.clearCache(); // Clear all cache
+            }
+            stopPnLPolling();
+            
             loadChatHistory();
             if (realtimeChannel) {
                 supabase.removeChannel(realtimeChannel);
@@ -345,7 +364,7 @@ function createChatUI() {
                             class="hl-chat-input" 
                             id="messageInput" 
                             placeholder="${hasBackendAuth ? `Chat with ${roomId} traders...` : 'Backend server not available - read-only mode'}"
-                            maxlength="500"
+                            maxlength="250"
                             ${!hasBackendAuth ? 'disabled' : ''}
                         />
                         <button class="hl-send-btn" id="sendMessage" ${!hasBackendAuth ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>Send</button>
@@ -472,6 +491,10 @@ async function loadChatHistory() {
         messages = data || [];
         updateMessagesUI();
         scrollToBottom();
+        
+        // Load P&L data for all users and start polling
+        loadAllUserPnL();
+        startPnLPolling();
 
     } catch (error) {
         updateMessagesUI('<div class="hl-error">Failed to load chat history</div>');
@@ -494,6 +517,12 @@ function subscribeBroadcast() {
 
         if (msg.room === roomId && msg.address !== walletAddress) {
             messages.push(msg);
+            
+            // Load P&L for new user if not cached
+            if (!userPnLCache.has(msg.address)) {
+                loadPnLForAddress(msg.address);
+            }
+            
             updateMessagesUI();
             scrollToBottom();
         }
@@ -545,6 +574,12 @@ async function sendMessage() {
             };
 
             messages.push(optimisticMessage);
+            
+            // Load P&L for current user if not cached
+            if (!userPnLCache.has(walletAddress)) {
+                loadPnLForAddress(walletAddress);
+            }
+            
             updateMessagesUI();
             scrollToBottom();
 
@@ -575,11 +610,18 @@ function updateMessagesUI(customHTML = null) {
     const messagesHTML = messages.map(msg => {
         const isOwn = msg.address === walletAddress;
         const displayName = msg.name || formatAddress(msg.address);
+        const pnlDisplay = getPnLDisplayForAddress(msg.address);
+        
         return `
             <div class="hl-message ${isOwn ? 'own' : ''}">
                 <div class="hl-message-header">
-                    <span class="hl-message-address">${displayName}</span>
-                    <span class="hl-message-time">${formatTime(msg.timestamp)}</span>
+                    <div class="hl-message-header-left">
+                        <span class="hl-message-address">${displayName}</span>
+                    </div>
+                    <div class="hl-message-header-right">
+                        ${pnlDisplay ? `<span class="hl-pnl-badge" data-address="${msg.address}" style="color: ${pnlDisplay.color};">${pnlDisplay.text}</span>` : ''}
+                        <span class="hl-message-time">${formatTime(msg.timestamp)}</span>
+                    </div>
                 </div>
                 <div class="hl-message-content">${escapeHtml(msg.content)}</div>
             </div>
@@ -658,6 +700,113 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
     }
 });
+
+// P&L Helper Functions
+function getPnLDisplayForAddress(address) {
+    return userPnLCache.get(address) || null;
+}
+
+async function loadAllUserPnL() {
+    if (!pnlService) {
+        console.warn('P&L service not initialized');
+        return;
+    }
+
+    // Get unique addresses from messages in current room
+    const uniqueAddresses = [...new Set(messages.map(m => m.address).filter(a => a))];
+    console.log(`Loading P&L for ${uniqueAddresses.length} users in ${currentPair} room`);
+
+    // Load P&L for each address with delay to avoid rate limiting
+    for (let i = 0; i < uniqueAddresses.length; i++) {
+        const address = uniqueAddresses[i];
+        if (address) {
+            await loadPnLForAddress(address);
+            // Add 200ms delay between requests to avoid rate limiting
+            if (i < uniqueAddresses.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+        }
+    }
+}
+
+async function loadPnLForAddress(address) {
+    if (!pnlService || !address) return;
+
+    try {
+        const oldPnL = userPnLCache.get(address);
+        console.log(`Loading P&L for ${address} on ${currentPair} ${currentMarket}`);
+        const pnlDisplay = await pnlService.getPnLDisplay(address, currentPair, currentMarket);
+        console.log(`P&L result for ${address} on ${currentPair}:`, pnlDisplay);
+        
+        if (pnlDisplay) {
+            userPnLCache.set(address, pnlDisplay);
+            
+            // Update the UI with animation if P&L changed
+            const badge = document.querySelector(`.hl-pnl-badge[data-address="${address}"]`);
+            if (badge) {
+                // Check if value changed
+                if (oldPnL && oldPnL.raw !== pnlDisplay.raw) {
+                    // Remove previous animation classes
+                    badge.classList.remove('pnl-updating', 'pnl-increase', 'pnl-decrease');
+                    
+                    // Add updating animation
+                    badge.classList.add('pnl-updating');
+                    
+                    setTimeout(() => {
+                        badge.textContent = pnlDisplay.text;
+                        badge.style.color = pnlDisplay.color;
+                        badge.classList.remove('pnl-updating');
+                        
+                        // Add increase/decrease animation
+                        if (pnlDisplay.raw > oldPnL.raw) {
+                            badge.classList.add('pnl-increase');
+                        } else if (pnlDisplay.raw < oldPnL.raw) {
+                            badge.classList.add('pnl-decrease');
+                        }
+                        
+                        // Remove animation class after animation completes
+                        setTimeout(() => {
+                            badge.classList.remove('pnl-increase', 'pnl-decrease');
+                        }, 600);
+                    }, 500);
+                } else if (!oldPnL) {
+                    // First load, no animation
+                    badge.textContent = pnlDisplay.text;
+                    badge.style.color = pnlDisplay.color;
+                }
+            }
+        }
+    } catch (error) {
+        console.error(`Failed to load P&L for ${address}:`, error);
+    }
+}
+
+function startPnLPolling() {
+    // Clear any existing interval
+    if (pnlUpdateInterval) {
+        clearInterval(pnlUpdateInterval);
+    }
+
+    // Poll every 2 minutes (120000ms)
+    pnlUpdateInterval = setInterval(() => {
+        console.log('Updating P&L data...');
+        
+        // Clear cache to force fresh data
+        if (pnlService) {
+            pnlService.clearCache();
+        }
+        
+        // Reload P&L for all users
+        loadAllUserPnL();
+    }, 120000); // 2 minutes
+}
+
+function stopPnLPolling() {
+    if (pnlUpdateInterval) {
+        clearInterval(pnlUpdateInterval);
+        pnlUpdateInterval = null;
+    }
+}
 
 // Initialize when DOM is ready
 if (document.readyState === 'loading') {

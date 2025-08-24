@@ -6,6 +6,7 @@
   "permissions": ["activeTab", "storage", "scripting", "sidePanel", "contextMenus"],
   "host_permissions": [
     "https://app.hyperliquid.xyz/*",
+    "https://api.hyperliquid.xyz/*",
     "https://gwxiafgocfqjyapgqfnl.supabase.co/*",
     "http://localhost:3002/*"
   ],
@@ -27,7 +28,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["chat-widget.html", "chat-widget.js", "wallet-bridge.js", "supabase.js"],
+      "resources": ["chat-widget.html", "chat-widget.js", "wallet-bridge.js", "supabase.js", "pnl-service.js"],
       "matches": ["https://app.hyperliquid.xyz/*"]
     }
   ]
