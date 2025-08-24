@@ -32,7 +32,7 @@ async function initializeWaku() {
 
         // Create Waku client with configuration
         wakuClient = new wakuModule.WakuChatClient({
-            wakuNodeIP: process.env.WAKU_NODE_IP,
+            wakuNodeURI: process.env.WAKU_NODE_URI,
             wakuNodePort: process.env.WAKU_NODE_PORT,
             wakuNodePeerId: process.env.WAKU_NODE_PEER_ID,
             onMessageReceived: (message) => {

@@ -1,0 +1,46 @@
+version: "3.8"
+
+services:
+  nwaku:
+    image: wakuorg/nwaku:v0.36.0
+    container_name: hyperchat-testnet-nwaku
+    volumes:
+      - ./nwaku_db:/var/db # Persist the message store
+    # Note: No ports are exposed to the host here. Caddy will access it via the internal Docker network.
+    command:
+      - --listen-address=0.0.0.0
+      - --nat=extip:${PUBLIC_IP}
+      - --relay=false
+      - --filter=true
+      - --lightpush=true
+      - --discv5-discovery=false
+      - --rest=true
+      - --rest-address=0.0.0.0
+      - --rest-port=8645
+      - --websocket-support=true
+      - --websocket-port=8000
+      - --cluster-id=999
+      - --nodekey=${NODE_KEY}
+      - --store=true
+      - --store-message-retention-policy=time:43200
+      - --store-message-db-url="sqlite:///var/db/waku_messages.db"
+
+  caddy:
+    image: caddy:2
+    container_name: caddy-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"   # For initial Let's Encrypt challenge
+      - "443:443" # For HTTPS and WSS traffic
+    environment:
+      - WAKU_WSS_DOMAIN=${WAKU_WSS_DOMAIN}
+      - WAKU_API_DOMAIN=${WAKU_API_DOMAIN}
+    volumes:
+      - ./Caddyfile.template:/etc/caddy/Caddyfile.template
+      - caddy_data:/data
+      - caddy_config:/config
+    command: sh -c "apk add --no-cache gettext && envsubst < /etc/caddy/Caddyfile.template > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"
+    
+volumes:
+  caddy_data:
+  caddy_config:

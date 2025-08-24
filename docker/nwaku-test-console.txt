@@ -1,0 +1,46 @@
+// This ES module import works directly in modern browser consoles
+import {
+  createLightNode,
+  waitForRemotePeer,
+} from "https://unpkg.com/js-waku@0.35.0/bundle/index.js";
+
+// --- CONFIGURATION ---
+// 1. Replace with your server's public IP address
+const publicIp = "172.103.234.38"; 
+// 2. Replace with the PeerID from your node's logs
+const peerId = "16Uiu2HAmV1DyijPPLpTpE4P8kZQPTVuJivCL7zBpDYptyn4PgR2b"; 
+// --- END CONFIGURATION ---
+
+const nodeMultiaddr = `/dns4/nwaku-testnet.${publicIp}.sslip.io/tcp/443/wss/p2p/${peerId}`;
+
+console.log("Attempting to connect to Waku node:", nodeMultiaddr);
+
+async function testWakuConnection() {
+  try {
+    console.log("Creating light node...");
+    const node = await createLightNode({
+      defaultBootstrap: false, // We don't want to connect to default fleet
+    });
+
+    console.log("Starting node...");
+    await node.start();
+    
+    console.log("Dialing the remote peer...");
+    await node.dial(nodeMultiaddr);
+
+    console.log("Waiting for remote peer connection...");
+    // Wait for the filter protocol to be mounted by the remote peer
+    await waitForRemotePeer(node, ["filter"]);
+
+    console.log("✅ SUCCESS: Successfully connected to the Nwaku node and the filter protocol is available!");
+    
+    // You can check the peer list
+    const peers = node.getPeers();
+    console.log(`Connected to ${peers.length} peer(s):`, peers);
+
+  } catch (error) {
+    console.error("❌ FAILURE: Could not connect to the Nwaku node.", error);
+  }
+}
+
+testWakuConnection();

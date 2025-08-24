@@ -3,6 +3,9 @@
 // Configuration - these should be replaced at build time
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY
+const WAKU_NODE_URI = process.env.WAKU_NODE_URI
+const WAKU_NODE_PORT = process.env.WAKU_NODE_PORT
+const WAKU_NODE_PEER_ID = process.env.WAKU_NODE_PEER_ID
 const BACKEND_PORT = process.env.BACKEND_PORT || 3001
 
 let supabase;
@@ -65,9 +68,9 @@ async function initializeWaku() {
 
         // Create Waku client with configuration
         wakuClient = new wakuModule.WakuChatClient({
-            wakuNodeIP: process.env.WAKU_NODE_IP,
-            wakuNodePort: process.env.WAKU_NODE_PORT,
-            wakuNodePeerId: process.env.WAKU_NODE_PEER_ID,
+            wakuNodeURI: WAKU_NODE_URI,
+            wakuNodePort: WAKU_NODE_PORT,
+            wakuNodePeerId: WAKU_NODE_PEER_ID,
             onMessageReceived: (message) => {
                 // Handle new messages from Waku
                 if (chatInstance) {

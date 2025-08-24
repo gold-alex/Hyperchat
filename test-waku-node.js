@@ -6,16 +6,19 @@
  */
 
 const WebSocket = require('ws');
+const dotenv = require('dotenv');
 
-const WAKU_NODE_IP = '10.0.0.58';
-const WAKU_NODE_PORT = 8000;
-const WAKU_NODE_PEER_ID = '16Uiu2HAmDiLTzSU7toieTmmL4VW579Mo13WCUdkaeCzWFAYQoVKF';
+dotenv.config();
+
+const WAKU_NODE_URI = process.env.WAKU_NODE_URI;
+const WAKU_NODE_PORT = process.env.WAKU_NODE_PORT;
+const WAKU_NODE_PEER_ID = process.env.WAKU_NODE_PEER_ID;
 
 console.log('Testing Waku node connectivity...\n');
 
 // Test 1: Basic WebSocket connection
-console.log('Test 1: WebSocket connection to ws://' + WAKU_NODE_IP + ':' + WAKU_NODE_PORT);
-const ws = new WebSocket(`ws://${WAKU_NODE_IP}:${WAKU_NODE_PORT}`);
+console.log('Test 1: WebSocket connection to wss://' + WAKU_NODE_URI + ':' + WAKU_NODE_PORT);
+const ws = new WebSocket(`wss://${WAKU_NODE_URI}:${WAKU_NODE_PORT}`);
 
 ws.on('open', () => {
     console.log('✅ WebSocket connection established!');
@@ -32,7 +35,7 @@ ws.on('error', (error) => {
     
     // Test 2: Try with different paths
     console.log('\nTest 2: Trying WebSocket with /ws path...');
-    const ws2 = new WebSocket(`ws://${WAKU_NODE_IP}:${WAKU_NODE_PORT}/ws`);
+    const ws2 = new WebSocket(`wss://${WAKU_NODE_URI}:${WAKU_NODE_PORT}/wss`);
     
     ws2.on('open', () => {
         console.log('✅ Connected with /ws path!');
@@ -45,7 +48,7 @@ ws.on('error', (error) => {
         // Test 3: Try TCP connection
         console.log('\nTest 3: Trying raw TCP connection...');
         const net = require('net');
-        const client = net.createConnection({ port: WAKU_NODE_PORT, host: WAKU_NODE_IP }, () => {
+        const client = net.createConnection({ port: WAKU_NODE_PORT, host: WAKU_NODE_URI }, () => {
             console.log('✅ TCP connection established!');
             console.log('Note: Waku node is reachable via TCP but may not have WebSocket enabled.');
             client.end();
@@ -53,7 +56,7 @@ ws.on('error', (error) => {
         
         client.on('error', (error3) => {
             console.log('❌ TCP connection failed:', error3.message);
-            console.log('\nSummary: The Waku node at ' + WAKU_NODE_IP + ':' + WAKU_NODE_PORT + ' is not reachable.');
+            console.log('\nSummary: The Waku node at ' + WAKU_NODE_URI + ':' + WAKU_NODE_PORT + ' is not reachable.');
             console.log('Possible issues:');
             console.log('  - Node is not running');
             console.log('  - Port ' + WAKU_NODE_PORT + ' is blocked by firewall');
@@ -71,7 +74,7 @@ console.log('\nTest 4: Checking for HTTP/REST API...');
 const http = require('http');
 
 const options = {
-    hostname: WAKU_NODE_IP,
+    hostname: WAKU_NODE_URI,
     port: WAKU_NODE_PORT,
     path: '/',
     method: 'GET',
@@ -99,9 +102,9 @@ req.end();
 // Test multiaddr format
 console.log('\nTest 5: Multiaddr format test');
 console.log('Full multiaddr that would be used:');
-console.log(`  /ip4/${WAKU_NODE_IP}/tcp/${WAKU_NODE_PORT}/ws/p2p/${WAKU_NODE_PEER_ID}`);
+console.log(`  /ip4/${WAKU_NODE_URI}/tcp/${WAKU_NODE_PORT}/wss/p2p/${WAKU_NODE_PEER_ID}`);
 console.log('\nIf the node requires different transport, try:');
-console.log(`  /ip4/${WAKU_NODE_IP}/tcp/${WAKU_NODE_PORT}/p2p/${WAKU_NODE_PEER_ID} (without /ws for non-WebSocket)`);
+console.log(`  /ip4/${WAKU_NODE_URI}/tcp/${WAKU_NODE_PORT}/p2p/${WAKU_NODE_PEER_ID} (without /ws for non-WebSocket)`);
 
 setTimeout(() => {
     console.log('\n\nTest complete. Exiting...');

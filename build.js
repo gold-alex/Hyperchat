@@ -64,9 +64,9 @@ const envVars = {
   'process.env.SUPABASE_URL': JSON.stringify(process.env.SUPABASE_URL),
   'process.env.SUPABASE_ANON_KEY': JSON.stringify(process.env.SUPABASE_ANON_KEY),
   'process.env.BACKEND_PORT': process.env.BACKEND_PORT,
-  'process.env.WAKU_NODE_IP': JSON.stringify(process.env.WAKU_NODE_IP || '10.0.0.5'),
-  'process.env.WAKU_NODE_PORT': process.env.WAKU_NODE_PORT || 8000,
-  'process.env.WAKU_NODE_PEER_ID': JSON.stringify(process.env.WAKU_NODE_PEER_ID || '16Uiu2HAm4v86W3bmT1BiH6oSPzcsSr24iDQpSN5Qa992BCjjwgrD')
+  'process.env.WAKU_NODE_URI': JSON.stringify(process.env.WAKU_NODE_URI || 'localhost'),
+  'process.env.WAKU_NODE_PORT': process.env.WAKU_NODE_PORT || 443,
+  'process.env.WAKU_NODE_PEER_ID': JSON.stringify(process.env.WAKU_NODE_PEER_ID || 'PEER_ID')
 };
 
 // Clean and create dist directory
@@ -109,7 +109,7 @@ console.log('Environment variables used:');
 
 // Group variables by type
 const supabaseVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'BACKEND_PORT'];
-const wakuVars = ['WAKU_NODE_IP', 'WAKU_NODE_PORT', 'WAKU_NODE_PEER_ID'];
+const wakuVars = ['WAKU_NODE_URL', 'WAKU_NODE_PORT', 'WAKU_NODE_PEER_ID'];
 
 // Display Supabase variables (legacy)
 console.log('\n  Supabase Configuration (Legacy):');

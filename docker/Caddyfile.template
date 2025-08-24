@@ -1,0 +1,8 @@
+
+${WAKU_WSS_DOMAIN} {
+    reverse_proxy nwaku:8000
+}
+
+${WAKU_API_DOMAIN} {
+    reverse_proxy nwaku:8645
+}

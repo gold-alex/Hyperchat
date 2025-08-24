@@ -2,12 +2,12 @@
 
 const WebSocket = require('ws');
 
-const WAKU_NODE_IP = '10.0.0.58';
-const WAKU_NODE_PORT = 8000;
+const WAKU_NODE_URI = process.env.WAKU_NODE_URI;
+const WAKU_NODE_PORT = process.env.WAKU_NODE_PORT;
 
 console.log('Testing Waku node protocol support...\n');
 
-const ws = new WebSocket(`ws://${WAKU_NODE_IP}:${WAKU_NODE_PORT}`);
+const ws = new WebSocket(`wss://${WAKU_NODE_URI}:${WAKU_NODE_PORT}`);
 
 ws.on('open', () => {
     console.log('✅ WebSocket connected');

@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Test nwaku node protocols
-WAKU_NODE_IP="10.0.0.58"
-WAKU_NODE_PORT="8000"
+WAKU_NODE_IP=${WAKU_NODE_IP}
+WAKU_NODE_PORT=${WAKU_NODE_PORT}
 
 echo "Testing nwaku node at $WAKU_NODE_IP:$WAKU_NODE_PORT"
 echo "========================================="
