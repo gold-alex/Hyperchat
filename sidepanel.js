@@ -333,7 +333,6 @@ function createChatUI() {
                         <label for="autoScrollCheckbox">Auto-scroll</label>
                     </div>
                     <div class="hl-chat-controls">
-                        <button class="hl-chat-popout" id="openFloatingChat" title="Open floating chat on page">↗</button>
                         <button class="hl-sidepanel-close" id="closeSidePanel" title="Close side panel">×</button>
                     </div>
                 </div>
@@ -386,29 +385,6 @@ function setupEventListeners() {
         });
     }
 
-    // Open floating chat on page
-    const openFloatingBtn = document.getElementById('openFloatingChat');
-    if (openFloatingBtn) {
-        openFloatingBtn.addEventListener('click', async () => {
-            try {
-                // Get the active tab
-                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-                if (tab && tab.url && tab.url.includes('app.hyperliquid.xyz')) {
-                    // Send message to content script to show floating chat
-                    chrome.tabs.sendMessage(tab.id, { 
-                        action: 'showChat',
-                        pair: currentPair,
-                        market: currentMarket
-                    });
-                } else {
-                    alert('Please navigate to app.hyperliquid.xyz/trade to use floating chat');
-                }
-            } catch (error) {
-                console.error('Failed to open floating chat:', error);
-                alert('Failed to open floating chat. Please try again.');
-            }
-        });
-    }
 
     // Auto-scroll toggle
     const autoScrollCheckbox = document.getElementById('autoScrollCheckbox');

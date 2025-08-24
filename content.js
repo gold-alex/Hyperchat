@@ -84,9 +84,9 @@ class HyperliquidChat {
   async init() {
     console.log("Initializing HyperliquidChat...")
 
-    // First detect market info and create widget
+    // First detect market info
     this.detectMarketInfo()
-    this.createChatWidget()
+    // Don't create floating widget - only sidepanel is supported
     this.setupMessageListener()
     this.startMarketMonitoring()
 
@@ -101,9 +101,7 @@ class HyperliquidChat {
       console.log("Initializing chat in read-only mode...")
       console.log(`Current trading pair: ${this.currentPair}, market: ${this.currentMarket}`)
 
-      if (window.IS_STANDALONE_CHAT) {
-        this.showChat();
-      }
+      // Don't show floating chat anymore
 
       await this.loadChatHistoryWithRetry()
       console.log("Chat history loaded successfully")
@@ -230,117 +228,11 @@ class HyperliquidChat {
   }
 
   createChatWidget() {
-    // Remove existing widget if present
-    const existing = document.getElementById("hyperliquid-chat-widget")
-    if (existing) existing.remove()
-
-    // Create chat widget container
-    const widget = document.createElement("div")
-    widget.id = "hyperliquid-chat-widget"
-    widget.className = "hl-chat-widget"
-    // Make resizable via CSS; dragging implemented below
-    widget.style.resize = 'both'
-    widget.style.overflow = 'hidden'
-
-    widget.innerHTML = this.getChatHTML()
-
-    document.body.appendChild(widget)
-    // Enable dragging by header
-    this.enableDrag(widget, widget.querySelector('#moveChat') || widget.querySelector('.hl-chat-header'))
-    this.setupEventListeners()
+    // Don't create floating widget anymore - only sidepanel is supported
+    console.log("Floating chat widget disabled - use sidepanel instead")
   }
 
-  enableDrag(widget, handleEl) {
-    const dragHandle = handleEl
-    if (!dragHandle) return
-    let startX, startY, startLeft, startTop, isDragging = false
-    dragHandle.style.cursor = 'move'
-
-    const onMouseMove = (e) => {
-      if (!isDragging) return
-      const dx = e.clientX - startX
-      const dy = e.clientY - startY
-      widget.style.left = `${startLeft + dx}px`
-      widget.style.top = `${startTop + dy}px`
-    }
-    const onMouseUp = () => {
-      isDragging = false
-      document.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mouseup', onMouseUp)
-    }
-    dragHandle.addEventListener('mousedown', (e) => {
-      isDragging = true
-      startX = e.clientX
-      startY = e.clientY
-      const rect = widget.getBoundingClientRect()
-      startLeft = rect.left
-      startTop = rect.top
-      document.addEventListener('mousemove', onMouseMove)
-      document.addEventListener('mouseup', onMouseUp)
-    })
-  }
-
-  getChatHTML() {
-    const roomId = `${this.currentPair}_${this.currentMarket}`
-    const isConnected = !!this.walletAddress
-
-    return `
-      <div class="hl-chat-container ${this.isVisible ? "visible" : ""}">
-        <div class="hl-chat-header">
-          <div class="hl-chat-title">
-            <span class="hl-chat-pair">${this.currentPair}</span>
-            <span class="hl-chat-market">${this.currentMarket} Chat</span>
-          </div>
-          <div class="hl-chat-autoscroll">
-            <input type="checkbox" id="autoScrollCheckbox" ${this.autoScroll ? "checked" : ""}>
-            <label for="autoScrollCheckbox">Auto-scroll</label>
-          </div>
-          <div class="hl-chat-controls">
-            ${window.IS_STANDALONE_CHAT ? `<button class="hl-chat-popin" id="popInChat" title="Return to page">⇦</button>` : `<button class="hl-chat-popout" id="popOutChat" title="Open in new tab">↗</button>`}
-            <button class="hl-chat-close" id="closeChat">×</button>
-          </div>
-        </div>
-
-        <div class="hl-chat-content">
-          <div class="hl-chat-messages" id="chatMessages">
-            ${this.renderMessages()}
-          </div>
-
-          ${!isConnected ? `
-          <div class="hl-chat-auth-bar" id="chatAuthBar">
-            <div class="hl-auth-message">
-              <span>Connect wallet to send messages</span>
-              <button class="hl-connect-btn-small" id="connectWallet">Connect</button>
-            </div>
-          </div>
-          ` : `
-          <div class="hl-name-bar">
-            <label class="hl-name-label">As:</label>
-            <select id="hlNameSelect" class="hl-name-select-input">
-              <option value="" ${this.selectedName === '' ? 'selected' : ''}>${this.formatAddress(this.walletAddress)}</option>
-              ${this.availableNames.map(n => `<option value="${n}" ${n === this.selectedName ? 'selected' : ''}>${n}</option>`).join('')}
-            </select>
-          </div>
-          <div class="hl-chat-input-container">
-            <input 
-              type="text" 
-              class="hl-chat-input" 
-              id="messageInput" 
-              placeholder="${this.jwtToken ? `Chat with ${roomId} traders...` : 'Backend server not available - read-only mode'}"
-              maxlength="500"
-              ${!this.jwtToken ? 'disabled' : ''}
-            />
-            <button class="hl-send-btn" id="sendMessage" ${!this.jwtToken ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>Send</button>
-          </div>
-          `}
-        </div>
-
-        <div class="hl-chat-toggle" id="chatToggle">
-          <span>💬</span>
-        </div>
-      </div>
-    `
-  }
+  // Removed floating chat UI methods - only sidepanel is supported
 
   renderMessages() {
     console.log(`Rendering ${this.messages.length} messages`)
@@ -374,120 +266,7 @@ class HyperliquidChat {
   }
 
   setupEventListeners() {
-    // Toggle chat visibility
-    const chatToggle = document.getElementById("chatToggle")
-    if (chatToggle) {
-      chatToggle.addEventListener("click", () => {
-        console.log("Chat toggle clicked")
-        this.toggleChat()
-      })
-    }
-
-    // Refresh chat history
-    const refreshChat = document.getElementById("refreshChat")
-    if (refreshChat) {
-      refreshChat.addEventListener("click", async () => {
-        console.log("Refresh chat clicked")
-        const messagesContainer = document.getElementById("chatMessages")
-        if (messagesContainer) {
-          messagesContainer.innerHTML = '<div class="hl-loading">Refreshing chat history...</div>'
-        }
-        try {
-          await this.loadChatHistoryWithRetry()
-          console.log("Chat history refreshed successfully")
-        } catch (error) {
-          console.error("Failed to refresh chat history:", error)
-        }
-      })
-    }
-
-    // Close chat
-    const closeChat = document.getElementById("closeChat")
-    if (closeChat) {
-      closeChat.addEventListener("click", () => {
-        this.hideChat()
-      })
-    }
-
-    // Move chat
-    const moveChat = document.getElementById("moveChat")
-    if (moveChat) {
-      // dragging handled by enableDrag; nothing else needed but cursor set above
-    }
-
-    // Minimize chat
-    const minimizeChat = document.getElementById("minimizeChat")
-    if (minimizeChat) {
-      minimizeChat.addEventListener("click", () => {
-        this.hideChat()
-      })
-    }
-
-    // Connect wallet
-    const connectWallet = document.getElementById("connectWallet")
-    if (connectWallet) {
-      connectWallet.addEventListener("click", () => {
-        console.log("Connect wallet clicked")
-        this.connectWallet()
-      })
-    }
-
-    // Send message
-    const sendMessage = document.getElementById("sendMessage")
-    if (sendMessage) {
-      sendMessage.addEventListener("click", async () => {
-        await this.sendMessage()
-      })
-    }
-
-    // Enter key to send message
-    const messageInput = document.getElementById("messageInput")
-    if (messageInput) {
-      messageInput.addEventListener("keypress", async (e) => {
-        if (e.key === "Enter") {
-          await this.sendMessage()
-        }
-      })
-    }
-
-    // Toggle auto-scroll
-    const autoScrollCheckbox = document.getElementById("autoScrollCheckbox")
-    if (autoScrollCheckbox) {
-      autoScrollCheckbox.addEventListener("change", (e) => {
-        this.autoScroll = e.target.checked
-        console.log(`Auto-scroll set to ${this.autoScroll}`)
-        if (this.autoScroll) {
-          this.scrollToBottom() // Immediately scroll if re-enabled
-        }
-      })
-    }
-
-    // HL name select
-    const nameSelect = document.getElementById("hlNameSelect")
-    if (nameSelect) {
-      nameSelect.addEventListener("change", (e) => {
-        this.selectedName = e.target.value
-      })
-    }
-
-    // Popout chat
-    if (!window.IS_STANDALONE_CHAT) {
-      const popBtn = document.getElementById("popOutChat")
-      if (popBtn) {
-        popBtn.addEventListener("click", () => {
-          this.hideChat()
-          chrome.runtime.sendMessage({ action: "openStandaloneChat", pair: this.currentPair, market: this.currentMarket })
-        })
-      }
-    } else {
-      const popIn = document.getElementById("popInChat")
-      if (popIn) {
-        popIn.addEventListener("click", () => {
-          chrome.runtime.sendMessage({ action: "showChat", pair: this.currentPair, market: this.currentMarket })
-          window.close()
-        })
-      }
-    }
+    // Event listeners removed - floating chat UI is disabled
   }
 
   // Injects a small script into the actual page context so we can access window.ethereum
@@ -549,8 +328,7 @@ class HyperliquidChat {
           }
         }
 
-        // Recreate the chat widget to show connected state
-        this.createChatWidget();
+        // Don't recreate floating widget - only sidepanel is supported;
 
         // Notify side panel about restored wallet connection
         chrome.runtime.sendMessage({
@@ -584,8 +362,7 @@ class HyperliquidChat {
     // Clear stored wallet state
     chrome.storage.local.remove(['walletConnected', 'walletAddress', 'availableNames', 'selectedName', 'hasBackendAuth']).catch(console.error);
 
-    // Recreate the chat widget to show disconnected state
-    this.createChatWidget();
+    // Don't recreate floating widget - only sidepanel is supported
 
     // Notify side panel about wallet disconnection
     chrome.runtime.sendMessage({
@@ -624,8 +401,7 @@ class HyperliquidChat {
           console.error("Failed to fetch HL names", err)
         }
 
-        // Recreate the chat widget to show connected state
-        this.createChatWidget()
+        // Don't recreate floating widget - only sidepanel is supported
 
         // Store wallet connection state in Chrome storage for persistence
         chrome.storage.local.set({
@@ -1057,15 +833,7 @@ class HyperliquidChat {
 
   setupMessageListener() {
     window.chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-      if (request.action === "toggleChat") {
-        this.showChat()
-      } else if (request.action === 'showChat' && !window.IS_STANDALONE_CHAT) {
-        this.currentPair = request.pair || this.currentPair
-        this.currentMarket = request.market || this.currentMarket
-        this.showChatDirect() // Direct show without mode check for explicit requests
-      } else if (request.action === 'hideChat' && !window.IS_STANDALONE_CHAT) {
-        this.hideChat()
-      } else if (request.action === 'getCurrentRoom') {
+      if (request.action === 'getCurrentRoom') {
         sendResponse({ 
           pair: this.currentPair, 
           market: this.currentMarket,
@@ -1153,45 +921,7 @@ class HyperliquidChat {
     }
   }
 
-  toggleChat() {
-    this.isVisible = !this.isVisible
-    const container = document.querySelector(".hl-chat-container")
-    if (container) {
-      container.style.opacity = this.isVisible ? '1' : '0'
-      container.style.pointerEvents = this.isVisible ? 'auto' : 'none'
-      container.classList.toggle("visible", this.isVisible)
-    }
-  }
-
-  showChat() {
-    // Check if we're in sidepanel mode first
-    chrome.storage.local.get(['chatMode'], (result) => {
-      const mode = result.chatMode || 'sidepanel'
-      if (mode === 'floating') {
-        this.showChatDirect()
-      }
-    })
-  }
-
-  showChatDirect() {
-    // Direct show without mode check - used when explicitly requested
-    this.isVisible = true
-    let widget = document.getElementById('hyperliquid-chat-widget')
-    if (!widget) {
-      this.createChatWidget()
-      widget = document.getElementById('hyperliquid-chat-widget')
-    }
-    const container = widget.querySelector('.hl-chat-container')
-    if (container) {
-      container.classList.add('visible')
-    }
-  }
-
-  hideChat() {
-    this.isVisible = false
-    const widget = document.getElementById('hyperliquid-chat-widget')
-    if (widget) widget.remove()
-  }
+  // Floating chat methods removed - only sidepanel is supported
 
   // Ask page context to sign a message
   signMessage(message) {
