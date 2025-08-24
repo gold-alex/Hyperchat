@@ -1,0 +1,10 @@
+// lib/chat-message.proto
+syntax = "proto3";
+
+message ChatMessage {
+  uint64 timestamp = 1;
+  string address = 2;
+  string content = 3;
+  string signature = 4; // Signature of (timestamp + content)
+  string name = 5;      // Optional HL Name
+}

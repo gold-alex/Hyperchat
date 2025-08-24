@@ -6,8 +6,7 @@
   "permissions": ["activeTab", "storage", "scripting", "sidePanel", "contextMenus"],
   "host_permissions": [
     "https://app.hyperliquid.xyz/*",
-    "https://gwxiafgocfqjyapgqfnl.supabase.co/*",
-    "http://localhost:3002/*"
+    "ws://10.0.0.5:60000/"
   ],
   "content_scripts": [
     {
@@ -27,7 +26,15 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["chat-widget.html", "chat-widget.js", "wallet-bridge.js", "supabase.js"],
+      "resources": [
+        "chat-widget.html",
+        "chat-widget.js",
+        "wallet-bridge.js",
+        "lib/waku-chat-client.js",
+        "lib/js-waku.min.js",
+        "lib/protobuf.js",
+        "lib/chat-message.proto"
+      ],
       "matches": ["https://app.hyperliquid.xyz/*"]
     }
   ]

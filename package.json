@@ -4,7 +4,6 @@
   "private": true,
   "scripts": {
     "build": "node build.js",
-    "build:simple": "rm -rf dist && mkdir -p dist && cp manifest.json background.js popup.html popup.js chat-widget.html chat-widget.js sidepanel.html sidepanel.js wallet-bridge.js content.css content.js supabase.js dist/",
     "dev": "next dev",
     "lint": "next lint",
     "start": "next start",

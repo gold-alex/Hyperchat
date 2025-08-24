@@ -6,6 +6,7 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY
 const BACKEND_PORT = process.env.BACKEND_PORT || 3001
 
 let supabase;
+let wakuClient;
 let chatInstance;
 
 // Initialize Supabase and then start the chat
@@ -55,10 +56,58 @@ function initializeSupabase() {
         });
 }
 
-// Initialize the chat once Supabase is ready
+// Initialize Waku client
+async function initializeWaku() {
+    try {
+        console.log('Importing WakuChatClient...');
+        const wakuModule = await import(chrome.runtime.getURL('lib/waku-chat-client.js'));
+        console.log('✅ WakuChatClient imported');
+
+        // Create Waku client with configuration
+        wakuClient = new wakuModule.WakuChatClient({
+            wakuNodeIP: process.env.WAKU_NODE_IP,
+            wakuNodePort: process.env.WAKU_NODE_PORT,
+            wakuNodePeerId: process.env.WAKU_NODE_PEER_ID,
+            onMessageReceived: (message) => {
+                // Handle new messages from Waku
+                if (chatInstance) {
+                    chatInstance.handleNewMessage(message);
+                }
+            },
+            onHistoryLoaded: (messages) => {
+                // Handle loaded history from Waku
+                if (chatInstance) {
+                    chatInstance.handleHistoryLoaded(messages);
+                }
+            },
+            onConnectionStatusChange: (connected) => {
+                // Handle connection status changes
+                if (chatInstance) {
+                    chatInstance.handleConnectionStatusChange(connected);
+                }
+            }
+        });
+
+        // Initialize the Waku client
+        const success = await wakuClient.initialize();
+        if (success) {
+            console.log('✅ Waku client initialized successfully');
+        } else {
+            console.error('❌ Failed to initialize Waku client');
+        }
+
+    } catch (error) {
+        console.error('❌ Failed to initialize Waku:', error);
+    } finally {
+        initializeChat();
+    }
+}
+
+// Initialize the chat once everything is ready
 function initializeChat() {
     chatInstance = new HyperliquidChat();
-    chatInstance.supabase = supabase; // Pass the Supabase instance
+    chatInstance.supabase = supabase; // Pass the Supabase instance for fallback
+    chatInstance.wakuClient = wakuClient; // Pass the Waku client
     chatInstance.init();
 }
 
@@ -70,6 +119,7 @@ class HyperliquidChat {
     this.walletAddress = ""
     this.messages = []
     this.supabase = null
+    this.wakuClient = null
     this.jwtToken = null
     // Add HL names state
     this.availableNames = []
@@ -96,7 +146,7 @@ class HyperliquidChat {
     // Restore wallet connection state if it exists
     await this.restoreWalletConnection()
 
-    // Load chat history immediately (read-only mode) - Supabase is already initialized
+    // Load chat history immediately (read-only mode)
     try {
       console.log("Initializing chat in read-only mode...")
       console.log(`Current trading pair: ${this.currentPair}, market: ${this.currentMarket}`)
@@ -108,8 +158,8 @@ class HyperliquidChat {
       await this.loadChatHistoryWithRetry()
       console.log("Chat history loaded successfully")
 
-      this.subscribeBroadcast() // Can still receive real-time messages
-      console.log("Broadcast subscription active")
+      this.subscribeToMessages() // Subscribe to real-time messages
+      console.log("Message subscription active")
 
       console.log("Read-only chat initialized successfully")
     } catch (error) {
@@ -122,6 +172,42 @@ class HyperliquidChat {
     }
   }
 
+  // Handle new messages from Waku
+  handleNewMessage(message) {
+    this.messages.push(message);
+    const messagesContainer = document.getElementById("chatMessages");
+    if (messagesContainer) {
+      messagesContainer.innerHTML = this.renderMessages();
+      this.scrollToBottom();
+    }
+  }
+
+  // Handle loaded history from Waku
+  handleHistoryLoaded(messages) {
+    this.messages = messages;
+    const messagesContainer = document.getElementById("chatMessages");
+    if (messagesContainer) {
+      messagesContainer.innerHTML = this.renderMessages();
+      this.scrollToBottom();
+    }
+  }
+
+  // Handle connection status changes
+  handleConnectionStatusChange(connected) {
+    const input = document.getElementById("messageInput");
+    const sendButton = document.getElementById("sendMessage");
+    
+    if (input) {
+      input.placeholder = connected ? 
+        "Type your message..." : 
+        "Waku not connected. Messages may not send.";
+    }
+    
+    if (sendButton) {
+      sendButton.disabled = !connected;
+    }
+  }
+
   detectMarketInfo() {
     console.log("Detecting market info...")
 
@@ -129,6 +215,7 @@ class HyperliquidChat {
     if (window.CHAT_PAIR_OVERRIDE) {
       this.currentPair = window.CHAT_PAIR_OVERRIDE;
       this.currentMarket = window.CHAT_MARKET_OVERRIDE || 'Perps';
+      console.log(`Using override: ${this.currentPair} ${this.currentMarket}`);
       return;
     }
 
@@ -326,11 +413,11 @@ class HyperliquidChat {
               type="text" 
               class="hl-chat-input" 
               id="messageInput" 
-              placeholder="${this.jwtToken ? `Chat with ${roomId} traders...` : 'Backend server not available - read-only mode'}"
+              placeholder="${this.jwtToken || this.wakuClient ? `Chat with ${roomId} traders...` : 'No connection available - read-only mode'}"
               maxlength="500"
-              ${!this.jwtToken ? 'disabled' : ''}
+              ${!this.jwtToken && !this.wakuClient ? 'disabled' : ''}
             />
-            <button class="hl-send-btn" id="sendMessage" ${!this.jwtToken ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>Send</button>
+            <button class="hl-send-btn" id="sendMessage" ${!this.jwtToken && !this.wakuClient ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>Send</button>
           </div>
           `}
         </div>
@@ -692,6 +779,12 @@ class HyperliquidChat {
   }
 
   async loadChatHistoryWithRetry(maxRetries = 3) {
+    // Use Waku if available, otherwise fall back to Supabase
+    if (this.wakuClient) {
+      return this.loadChatHistoryFromWakuWithRetry(maxRetries);
+    }
+    
+    // Legacy Supabase fallback
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         console.log(`Loading chat history attempt ${attempt}/${maxRetries}`)
@@ -711,6 +804,37 @@ class HyperliquidChat {
 
         // Wait before retry (exponential backoff)
         await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
+      }
+    }
+  }
+
+  async loadChatHistoryFromWakuWithRetry(maxRetries = 3) {
+    if (!this.wakuClient) {
+      throw new Error("Waku client not initialized");
+    }
+
+    // Set the current room in the Waku client
+    this.wakuClient.setRoom(this.currentPair, this.currentMarket);
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`Loading Waku chat history attempt ${attempt}/${maxRetries}`);
+        await this.wakuClient.loadHistoryWithRetry(maxRetries);
+        return; // Success, exit retry loop
+      } catch (error) {
+        console.error(`Waku chat history load attempt ${attempt} failed:`, error);
+
+        if (attempt === maxRetries) {
+          // Final attempt failed
+          const messagesContainer = document.getElementById("chatMessages");
+          if (messagesContainer) {
+            messagesContainer.innerHTML = `<div class="hl-error">Failed to load chat from Waku after ${maxRetries} attempts. <button onclick="location.reload()">Refresh Page</button></div>`;
+          }
+          throw error;
+        }
+
+        // Wait before retry (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
       }
     }
   }
@@ -803,7 +927,21 @@ class HyperliquidChat {
     }
   }
 
+
+
   subscribeBroadcast() {
+    // Use Waku if available, otherwise fall back to Supabase
+    if (this.wakuClient) {
+      this.subscribeToMessages();
+      return;
+    }
+    
+    // Legacy Supabase fallback
+    if (!this.supabase) {
+      console.warn('Neither Waku nor Supabase available for subscription');
+      return;
+    }
+    
     const roomId = `${this.currentPair}_${this.currentMarket}`
     console.log(`Subscribing to broadcast for room: ${roomId}`)
 
@@ -831,7 +969,30 @@ class HyperliquidChat {
     this.realtimeChannel = channel
   }
 
+  async subscribeToMessages() {
+    if (!this.wakuClient) {
+      console.error("❌ Waku client not initialized, cannot subscribe");
+      return;
+    }
+
+    // Set the current room in the Waku client
+    this.wakuClient.setRoom(this.currentPair, this.currentMarket);
+    
+    try {
+      await this.wakuClient.subscribe();
+      console.log(`✅ Subscribed to Waku messages.`);
+    } catch (error) {
+      console.error("Failed to subscribe to Waku messages:", error);
+    }
+  }
+
   async sendMessage() {
+    // Use Waku if available, otherwise fall back to Supabase
+    if (this.wakuClient) {
+      return this.sendMessageViaWaku();
+    }
+    
+    // Legacy Supabase/backend method
     const input = document.getElementById("messageInput")
     let content = input.value.trim()
 
@@ -949,6 +1110,74 @@ class HyperliquidChat {
     }
   }
 
+  async sendMessageViaWaku() {
+    const input = document.getElementById("messageInput");
+    let content = input.value.trim();
+    if (!content) return;
+    
+    if (!this.walletAddress) {
+      alert('Please connect your wallet first');
+      return;
+    }
+    
+    if (!this.wakuClient) {
+      alert('Waku is not connected. Messages cannot be sent at this time.');
+      return;
+    }
+
+    if (content.length > 500) {
+      content = content.substring(0, 500);
+      console.warn('Message truncated to 500 characters');
+    }
+    
+    try {
+      const timestamp = Date.now();
+      
+      // 1. Prepare the data to be signed
+      const dataToSign = JSON.stringify({ timestamp, content });
+
+      // 2. Sign the data with the wallet
+      const signature = await this.signMessage(dataToSign);
+      console.log('Message signed successfully');
+
+      // Set wallet info in Waku client
+      this.wakuClient.setWalletInfo(this.walletAddress, this.selectedName);
+
+      // Optimistic UI
+      const optimisticMessage = {
+        address: this.walletAddress,
+        name: this.selectedName,
+        content,
+        timestamp,
+        signature,
+        isOptimistic: true
+      };
+      this.messages.push(optimisticMessage);
+      document.getElementById("chatMessages").innerHTML = this.renderMessages();
+      this.scrollToBottom();
+      input.value = '';
+
+      // 3. Send message via Waku client
+      await this.wakuClient.sendMessage(content, signature);
+
+      console.log('Message sent successfully to Waku network');
+      
+      // Remove optimistic flag after successful send
+      const sentMsg = this.messages.find(m => m.isOptimistic && m.timestamp === timestamp);
+      if (sentMsg) {
+        delete sentMsg.isOptimistic;
+      }
+
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      // Remove optimistic message on error
+      this.messages = this.messages.filter(msg => !msg.isOptimistic);
+      document.getElementById("chatMessages").innerHTML = this.renderMessages();
+      this.scrollToBottom();
+      alert(`Failed to send message: ${error.message}`);
+    }
+  }
+
   async startMarketMonitoring() {
     // Monitor for market changes
     setInterval(() => {
@@ -1005,7 +1234,7 @@ class HyperliquidChat {
         })
 
         // Load new room (works with or without wallet)
-        if (this.supabase) {
+        if (this.wakuClient || this.supabase) {
           console.log(`Loading new room: ${newRoomId}`)
           this.loadChatHistoryWithRetry().then(() => {
             this.subscribeBroadcast()
@@ -1032,7 +1261,9 @@ class HyperliquidChat {
         // Update input placeholder if wallet is connected
         const inputElement = document.getElementById("messageInput")
         if (inputElement) {
-          inputElement.placeholder = `Chat with ${newRoomId} traders...`
+          inputElement.placeholder = this.wakuClient ? 
+            `Chat with ${newRoomId} traders...` : 
+            `Chat with ${newRoomId} traders... (Waku not connected)`
         }
       }
     }, 2000)
@@ -1049,7 +1280,9 @@ class HyperliquidChat {
     // Update input placeholder with current room (only if connected)
     const roomId = `${this.currentPair}_${this.currentMarket}`
     if (inputElement) {
-      inputElement.placeholder = `Chat with ${roomId} traders...`
+      inputElement.placeholder = this.wakuClient ? 
+        `Chat with ${roomId} traders...` : 
+        `Chat with ${roomId} traders... (Waku not connected)`
     }
 
     console.log(`Chat header updated for room: ${roomId}`)
@@ -1238,10 +1471,16 @@ class HyperliquidChat {
 // Initialize chat when page loads
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => {
-    initializeSupabase()
+    // Initialize Waku as primary, Supabase as fallback
+    initializeWaku();
+    // Only initialize Supabase if explicitly needed (for backward compatibility)
+    // initializeSupabase();
   })
 } else {
-  initializeSupabase()
+  // Initialize Waku as primary, Supabase as fallback
+  initializeWaku();
+  // Only initialize Supabase if explicitly needed (for backward compatibility)
+  // initializeSupabase();
 }
 
 // Export for testing purposes

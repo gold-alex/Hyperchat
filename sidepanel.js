@@ -14,6 +14,7 @@ let currentMarket = initialMarket;
 let walletAddress = '';
 let messages = [];
 let supabase = null;
+let wakuClient = null;
 let chatInstance = null;
 let availableNames = [];
 let selectedName = '';
@@ -21,6 +22,75 @@ let autoScroll = true;
 let realtimeChannel = null;
 let hasBackendAuth = false;
 let hasLoadedInitialData = false;
+
+// Initialize Waku client
+async function initializeWaku() {
+    try {
+        console.log('Importing WakuChatClient...');
+        const wakuModule = await import(chrome.runtime.getURL('lib/waku-chat-client.js'));
+        console.log('✅ WakuChatClient imported');
+
+        // Create Waku client with configuration
+        wakuClient = new wakuModule.WakuChatClient({
+            wakuNodeIP: process.env.WAKU_NODE_IP,
+            wakuNodePort: process.env.WAKU_NODE_PORT,
+            wakuNodePeerId: process.env.WAKU_NODE_PEER_ID,
+            onMessageReceived: (message) => {
+                // Handle new messages from Waku
+                handleNewMessage(message);
+            },
+            onHistoryLoaded: (loadedMessages) => {
+                // Handle loaded history from Waku
+                handleHistoryLoaded(loadedMessages);
+            },
+            onConnectionStatusChange: (connected) => {
+                // Handle connection status changes
+                handleConnectionStatusChange(connected);
+            }
+        });
+
+        // Initialize the Waku client
+        const success = await wakuClient.initialize();
+        if (success) {
+            console.log('✅ Waku client initialized successfully');
+        } else {
+            console.error('❌ Failed to initialize Waku client');
+        }
+
+    } catch (error) {
+        console.error('❌ Failed to initialize Waku:', error);
+    }
+}
+
+// Handle new messages from Waku
+function handleNewMessage(message) {
+    messages.push(message);
+    updateMessagesUI();
+    scrollToBottom();
+}
+
+// Handle loaded history from Waku
+function handleHistoryLoaded(loadedMessages) {
+    messages = loadedMessages;
+    updateMessagesUI();
+    scrollToBottom();
+}
+
+// Handle connection status changes
+function handleConnectionStatusChange(connected) {
+    const input = document.getElementById("messageInput");
+    const sendButton = document.getElementById("sendButton");
+    
+    if (input) {
+        input.placeholder = connected ? 
+            "Type your message..." : 
+            "Waku not connected. Messages may not send.";
+    }
+    
+    if (sendButton) {
+        sendButton.disabled = !connected;
+    }
+}
 
 // Initialize Supabase
 async function initializeSupabase() {
@@ -448,8 +518,21 @@ function setupEventListeners() {
 
 // Load chat history
 async function loadChatHistory() {
+    // Use Waku if available, otherwise fall back to Supabase
+    if (wakuClient) {
+        try {
+            // Set the current room in the Waku client
+            wakuClient.setRoom(currentPair, currentMarket);
+            await wakuClient.loadHistoryWithRetry();
+            return;
+        } catch (error) {
+            console.error('Failed to load history from Waku:', error);
+        }
+    }
+    
+    // Legacy Supabase fallback
     if (!supabase) {
-        console.warn('Supabase not initialized');
+        console.warn('Neither Waku nor Supabase available for history loading');
         return;
     }
 
@@ -480,7 +563,23 @@ async function loadChatHistory() {
 
 // Subscribe to real-time updates
 function subscribeBroadcast() {
-    if (!supabase) return;
+    // Use Waku if available, otherwise fall back to Supabase
+    if (wakuClient) {
+        try {
+            // Set the current room in the Waku client
+            wakuClient.setRoom(currentPair, currentMarket);
+            wakuClient.subscribe();
+            return;
+        } catch (error) {
+            console.error('Failed to subscribe to Waku messages:', error);
+        }
+    }
+    
+    // Legacy Supabase fallback
+    if (!supabase) {
+        console.warn('Neither Waku nor Supabase available for subscription');
+        return;
+    }
 
     const roomId = `${currentPair}_${currentMarket}`;
     console.log(`Subscribing to broadcast for room: ${roomId}`);
@@ -517,6 +616,67 @@ async function sendMessage() {
         return;
     }
 
+    // Use Waku if available, otherwise fall back to content script delegation
+    if (wakuClient) {
+        try {
+            // Set wallet info in Waku client
+            wakuClient.setWalletInfo(walletAddress, selectedName);
+            
+            // Get signature from content script
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!tab || !tab.url || !tab.url.includes('app.hyperliquid.xyz')) {
+                alert('Please navigate to app.hyperliquid.xyz/trade to send messages');
+                return;
+            }
+
+            const timestamp = Date.now();
+            const dataToSign = JSON.stringify({ timestamp, content });
+            
+            const response = await chrome.tabs.sendMessage(tab.id, {
+                action: 'signMessage',
+                message: dataToSign
+            });
+
+            if (!response || !response.signature) {
+                throw new Error('Failed to get signature');
+            }
+
+            // Optimistic UI
+            const optimisticMessage = {
+                address: walletAddress,
+                name: selectedName,
+                content,
+                timestamp,
+                signature: response.signature,
+                isOptimistic: true
+            };
+            messages.push(optimisticMessage);
+            updateMessagesUI();
+            scrollToBottom();
+            input.value = '';
+
+            // Send via Waku client
+            await wakuClient.sendMessage(content, response.signature);
+            
+            // Remove optimistic flag after successful send
+            const sentMsg = messages.find(m => m.isOptimistic && m.timestamp === timestamp);
+            if (sentMsg) {
+                delete sentMsg.isOptimistic;
+            }
+
+            return;
+        } catch (error) {
+            console.error('Failed to send message via Waku:', error);
+            // Remove optimistic message on error
+            messages = messages.filter(msg => !msg.isOptimistic);
+            updateMessagesUI();
+            scrollToBottom();
+            alert(`Failed to send message: ${error.message}`);
+            return;
+        }
+    }
+    
+    // Legacy method - delegate to content script
     if (!hasBackendAuth) {
         alert('Backend server not available. Messages cannot be sent at this time.');
         return;
@@ -661,7 +821,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 // Initialize when DOM is ready
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initializeSupabase);
+    document.addEventListener('DOMContentLoaded', () => {
+        // Initialize Waku as primary, Supabase as fallback
+        initializeWaku();
+        // Only initialize Supabase if explicitly needed (for backward compatibility)
+        // initializeSupabase();
+    });
 } else {
-    initializeSupabase();
+    // Initialize Waku as primary, Supabase as fallback
+    initializeWaku();
+    // Only initialize Supabase if explicitly needed (for backward compatibility)
+    // initializeSupabase();
 }
