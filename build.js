@@ -19,7 +19,8 @@ const sourceFiles = [
   'content.css',
   'content.js',
   'supabase.js',
-  'pnl-service.js'
+  'pnl-service.js',
+  'eip712-types.js'
 ];
 
 // Environment variables to substitute

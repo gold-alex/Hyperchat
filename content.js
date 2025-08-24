@@ -112,11 +112,7 @@ class HyperliquidChat {
       console.log("Read-only chat initialized successfully")
     } catch (error) {
       console.error("Failed to initialize read-only chat:", error)
-      // Don't fail silently - show something to the user
-      const messagesContainer = document.getElementById("chatMessages")
-      if (messagesContainer) {
-        messagesContainer.innerHTML = '<div class="hl-error">Failed to load chat history. Please refresh the page.</div>'
-      }
+      // Sidepanel will handle error display
     }
   }
 
@@ -445,18 +441,50 @@ class HyperliquidChat {
   }
 
   async handleBackendAuth() {
-    // Build login message
+    // Build login message with EIP-712
     const ts = Date.now()
-    const loginMsg = `HyperLiquidChat login ${ts}`
+    const nonce = Math.random().toString(36).substring(2, 15)
+    
+    // Create EIP-712 typed data for login
+    const typedData = {
+      domain: {
+        name: 'Hyperliquid Chat',
+        version: '1',
+        chainId: 1
+      },
+      primaryType: 'Login',
+      types: {
+        EIP712Domain: [
+          { name: 'name', type: 'string' },
+          { name: 'version', type: 'string' },
+          { name: 'chainId', type: 'uint256' }
+        ],
+        Login: [
+          { name: 'message', type: 'string' },
+          { name: 'timestamp', type: 'uint256' },
+          { name: 'nonce', type: 'string' }
+        ]
+      },
+      message: {
+        message: 'Sign in to Hyperliquid Chat',
+        timestamp: ts,
+        nonce: nonce
+      }
+    }
 
-    // Ask wallet to sign
-    const signature = await this.signMessage(loginMsg)
+    // Ask wallet to sign typed data
+    const signature = await this.signTypedData(typedData)
 
-    // Send to backend
-          const resp = await fetch(`http://localhost:${BACKEND_PORT}/auth`, {
+    // Send to backend with typed data
+    const resp = await fetch(`http://localhost:${BACKEND_PORT}/auth`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address: this.walletAddress, signature, timestamp: ts })
+      body: JSON.stringify({ 
+        address: this.walletAddress, 
+        signature, 
+        typedData: typedData,
+        timestamp: ts 
+      })
     })
 
     if (!resp.ok) {
@@ -478,10 +506,7 @@ class HyperliquidChat {
 
         if (attempt === maxRetries) {
           // Final attempt failed
-          const messagesContainer = document.getElementById("chatMessages")
-          if (messagesContainer) {
-            messagesContainer.innerHTML = `<div class="hl-error">Failed to load chat after ${maxRetries} attempts. <button onclick="location.reload()">Refresh Page</button></div>`
-          }
+          console.error(`Failed to load chat after ${maxRetries} attempts`)
           throw error
         }
 
@@ -552,26 +577,8 @@ class HyperliquidChat {
       this.messages = data || []
       console.log(`✅ Set this.messages to array with ${this.messages.length} items`)
 
-      // Update the UI
-      const messagesContainer = document.getElementById("chatMessages")
-      console.log('Messages container element:', messagesContainer)
-
-      if (messagesContainer) {
-        if (this.messages.length === 0) {
-          const noMessagesHTML = `<div class="hl-loading">No messages yet in ${roomId}. Be the first to chat!</div>`
-          console.log('Setting no messages HTML:', noMessagesHTML)
-          messagesContainer.innerHTML = noMessagesHTML
-        } else {
-          const renderedHTML = this.renderMessages()
-          console.log('Rendered messages HTML:', renderedHTML)
-          messagesContainer.innerHTML = renderedHTML
-          this.scrollToBottom()
-          console.log('✅ Updated chat UI with messages and scrolled to bottom')
-        }
-      } else {
-        console.error("❌ Messages container not found in DOM!")
-        console.log('Available elements with IDs:', Array.from(document.querySelectorAll('[id]')).map(el => el.id))
-      }
+      // Don't update UI - floating chat is removed, only sidepanel handles UI
+      console.log('✅ Chat history loaded, sidepanel will handle UI rendering')
 
     } catch (err) {
       console.error('❌ Failed to load chat history:', err)
@@ -592,10 +599,9 @@ class HyperliquidChat {
 
         // Only show messages for the current room and not from ourselves
         if (msg.room === roomId && msg.address !== this.walletAddress) {
-          console.log('Adding message to UI:', msg)
+          console.log('Adding message to messages array:', msg)
           this.messages.push(msg)
-          document.getElementById("chatMessages").innerHTML = this.renderMessages()
-          this.scrollToBottom()
+          // Sidepanel will handle UI updates via message sync
         } else {
           console.log('Ignoring message - wrong room or own message')
         }
@@ -626,28 +632,46 @@ class HyperliquidChat {
     }
 
     const timestamp = Date.now()
-    const nonce = timestamp + Math.random().toString(36).substr(2, 9) // unique nonce
+    const nonce = timestamp + Math.random().toString(36).substring(2, 11) // unique nonce
+    const room = `${this.currentPair}_${this.currentMarket}`
 
-    const messageObj = {
-      address: this.walletAddress,
-      name: this.selectedName,
-      content: content,
-      timestamp: timestamp,
-      pair: this.currentPair,
-      market: this.currentMarket,
-      room: `${this.currentPair}_${this.currentMarket}`,
-      nonce: nonce
+    // Create EIP-712 typed data for message
+    const typedData = {
+      domain: {
+        name: 'Hyperliquid Chat',
+        version: '1',
+        chainId: 1
+      },
+      primaryType: 'ChatMessage',
+      types: {
+        EIP712Domain: [
+          { name: 'name', type: 'string' },
+          { name: 'version', type: 'string' },
+          { name: 'chainId', type: 'uint256' }
+        ],
+        ChatMessage: [
+          { name: 'room', type: 'string' },
+          { name: 'content', type: 'string' },
+          { name: 'timestamp', type: 'uint256' },
+          { name: 'nonce', type: 'string' }
+        ]
+      },
+      message: {
+        room: room,
+        content: content,
+        timestamp: timestamp,
+        nonce: nonce
+      }
     }
 
-    const messageString = JSON.stringify(messageObj)
-    console.log('Preparing to send message:', messageObj)
+    console.log('Preparing to send message with EIP-712:', typedData.message)
 
     try {
-      // Sign the message string
-      const signature = await this.signMessage(messageString)
+      // Sign the typed data
+      const signature = await this.signTypedData(typedData)
       console.log('Message signed successfully')
 
-      // Optimistic UI - show message immediately
+      // Add message to array (sidepanel will handle UI)
       this.messages.push({
         address: this.walletAddress,
         name: this.selectedName,
@@ -655,14 +679,14 @@ class HyperliquidChat {
         timestamp: timestamp,
         pair: this.currentPair,
         market: this.currentMarket,
-        room: messageObj.room
+        room: room
       })
-      input.value = ""
-      document.getElementById("chatMessages").innerHTML = this.renderMessages()
-      this.scrollToBottom()
+      
+      // Clear input if it exists (might be called from sidepanel)
+      if (input) input.value = ""
 
-      // Send to backend
-              const response = await fetch(`http://localhost:${BACKEND_PORT}/message`, {
+      // Send to backend with typed data
+      const response = await fetch(`http://localhost:${BACKEND_PORT}/message`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -670,7 +694,11 @@ class HyperliquidChat {
         },
         body: JSON.stringify({
           signature: signature,
-          message: messageString
+          typedData: typedData,
+          address: this.walletAddress,
+          name: this.selectedName,
+          pair: this.currentPair,
+          market: this.currentMarket
         })
       })
 
@@ -708,8 +736,6 @@ class HyperliquidChat {
       this.messages = this.messages.filter(msg => 
         !(msg.timestamp === timestamp && msg.address === this.walletAddress)
       )
-      document.getElementById("chatMessages").innerHTML = this.renderMessages()
-      this.scrollToBottom()
 
       // Show user-friendly error messages
       let errorMessage = error.message
@@ -742,14 +768,7 @@ class HyperliquidChat {
         // Clear current messages
         this.messages = []
 
-        // Update chat header immediately
-        this.updateChatHeader()
-
-        // Show loading state
-        const messagesContainer = document.getElementById("chatMessages")
-        if (messagesContainer) {
-          messagesContainer.innerHTML = '<div class="hl-loading">Switching to ' + newRoomId + '...</div>'
-        }
+        // No UI updates needed - sidepanel handles everything
 
         // Clean up old subscription
         if (this.supabase && this.realtimeChannel) {
@@ -799,36 +818,18 @@ class HyperliquidChat {
             }).catch(() => {})
           }).catch(error => {
             console.error("Failed to load new room:", error)
-            if (messagesContainer) {
-              messagesContainer.innerHTML = '<div class="hl-error">Failed to load chat for ' + newRoomId + '</div>'
-            }
           })
         }
 
-        // Update input placeholder if wallet is connected
-        const inputElement = document.getElementById("messageInput")
-        if (inputElement) {
-          inputElement.placeholder = `Chat with ${newRoomId} traders...`
-        }
+        // No UI updates needed - sidepanel handles everything
       }
     }, 2000)
   }
 
   updateChatHeader() {
-    const pairElement = document.querySelector(".hl-chat-pair")
-    const marketElement = document.querySelector(".hl-chat-market")
-    const inputElement = document.getElementById("messageInput")
-
-    if (pairElement) pairElement.textContent = this.currentPair
-    if (marketElement) marketElement.textContent = `${this.currentMarket} Chat`
-
-    // Update input placeholder with current room (only if connected)
+    // No UI to update - sidepanel handles everything
     const roomId = `${this.currentPair}_${this.currentMarket}`
-    if (inputElement) {
-      inputElement.placeholder = `Chat with ${roomId} traders...`
-    }
-
-    console.log(`Chat header updated for room: ${roomId}`)
+    console.log(`Room changed to: ${roomId}`)
   }
 
   setupMessageListener() {
@@ -913,13 +914,7 @@ class HyperliquidChat {
     return div.innerHTML
   }
 
-  scrollToBottom() {
-    if (!this.autoScroll) return
-    const messagesContainer = document.getElementById("chatMessages")
-    if (messagesContainer) {
-      messagesContainer.scrollTop = messagesContainer.scrollHeight
-    }
-  }
+  // No UI methods needed - sidepanel handles everything
 
   // Floating chat methods removed - only sidepanel is supported
 
@@ -940,6 +935,26 @@ class HyperliquidChat {
 
       window.addEventListener('message', handler);
       window.postMessage({ type: 'HL_SIGN_REQUEST', id, message, address: this.walletAddress }, '*');
+    });
+  }
+
+  // Sign typed data using EIP-712
+  signTypedData(typedData) {
+    return new Promise((resolve, reject) => {
+      const id = Date.now() + Math.random();
+
+      const handler = (event) => {
+        if (event.source !== window || !event.data || event.data.type !== 'HL_SIGN_RESPONSE' || event.data.id !== id) return;
+        window.removeEventListener('message', handler);
+        if (event.data.error) {
+          reject(new Error(event.data.error));
+        } else {
+          resolve(event.data.signature);
+        }
+      };
+
+      window.addEventListener('message', handler);
+      window.postMessage({ type: 'HL_SIGN_REQUEST', id, typedData, address: this.walletAddress }, '*');
     });
   }
 
