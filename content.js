@@ -3,7 +3,7 @@
 // Configuration - these should be replaced at build time
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY
-const BACKEND_PORT = process.env.BACKEND_PORT || 3001
+const BACKEND_PORT = process.env.BACKEND_PORT || 3002
 
 let supabase;
 let chatInstance;
@@ -446,18 +446,17 @@ class HyperliquidChat {
     const nonce = Math.random().toString(36).substring(2, 15)
     
     // Create EIP-712 typed data for login
+    // No chainId needed for Hyperliquid (custom L1)
     const typedData = {
       domain: {
         name: 'Hyperliquid Chat',
-        version: '1',
-        chainId: 1
+        version: '1'
       },
       primaryType: 'Login',
       types: {
         EIP712Domain: [
           { name: 'name', type: 'string' },
-          { name: 'version', type: 'string' },
-          { name: 'chainId', type: 'uint256' }
+          { name: 'version', type: 'string' }
         ],
         Login: [
           { name: 'message', type: 'string' },
@@ -476,6 +475,7 @@ class HyperliquidChat {
     const signature = await this.signTypedData(typedData)
 
     // Send to backend with typed data
+    console.log(`Sending auth request to http://localhost:${BACKEND_PORT}/auth`)
     const resp = await fetch(`http://localhost:${BACKEND_PORT}/auth`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -488,7 +488,9 @@ class HyperliquidChat {
     })
 
     if (!resp.ok) {
-      throw new Error('Authentication failed')
+      const errorText = await resp.text()
+      console.error('Backend auth failed:', resp.status, errorText)
+      throw new Error(`Authentication failed: ${errorText}`)
     }
 
     const data = await resp.json()
@@ -613,16 +615,36 @@ class HyperliquidChat {
     this.realtimeChannel = channel
   }
 
-  async sendMessage() {
-    const input = document.getElementById("messageInput")
-    let content = input.value.trim()
+  async sendMessageFromSidepanel(content) {
+    // Method specifically for sidepanel to send messages
+    if (!content || !this.walletAddress) return
 
     if (content.length > 500) {
       content = content.substring(0, 500)
-      // Optionally alert the user that the message was truncated
       console.warn('Message truncated to 500 characters')
     }
 
+    return this.sendMessageInternal(content)
+  }
+
+  async sendMessage() {
+    const input = document.getElementById("messageInput")
+    let content = input?.value?.trim()
+
+    if (!content || !this.walletAddress) return
+
+    if (content.length > 500) {
+      content = content.substring(0, 500)
+      console.warn('Message truncated to 500 characters')
+    }
+
+    // Clear input if it exists
+    if (input) input.value = ""
+    
+    return this.sendMessageInternal(content)
+  }
+
+  async sendMessageInternal(content) {
     if (!content || !this.walletAddress) return
 
     // Check if we have a JWT token (backend authentication)
@@ -639,15 +661,13 @@ class HyperliquidChat {
     const typedData = {
       domain: {
         name: 'Hyperliquid Chat',
-        version: '1',
-        chainId: 1
+        version: '1'
       },
       primaryType: 'ChatMessage',
       types: {
         EIP712Domain: [
           { name: 'name', type: 'string' },
-          { name: 'version', type: 'string' },
-          { name: 'chainId', type: 'uint256' }
+          { name: 'version', type: 'string' }
         ],
         ChatMessage: [
           { name: 'room', type: 'string' },
@@ -681,9 +701,6 @@ class HyperliquidChat {
         market: this.currentMarket,
         room: room
       })
-      
-      // Clear input if it exists (might be called from sidepanel)
-      if (input) input.value = ""
 
       // Send to backend with typed data
       const response = await fetch(`http://localhost:${BACKEND_PORT}/message`, {
@@ -724,7 +741,7 @@ class HyperliquidChat {
             timestamp: timestamp,
             pair: this.currentPair,
             market: this.currentMarket,
-            room: messageObj.room
+            room: room
           }
         })
       }
@@ -833,7 +850,7 @@ class HyperliquidChat {
   }
 
   setupMessageListener() {
-    window.chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    window.chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       if (request.action === 'getCurrentRoom') {
         sendResponse({ 
           pair: this.currentPair, 
@@ -841,21 +858,45 @@ class HyperliquidChat {
           messages: this.messages,
           walletAddress: this.walletAddress,
           availableNames: this.availableNames,
-          selectedName: this.selectedName
+          selectedName: this.selectedName,
+          hasBackendAuth: !!this.jwtToken
         })
         return true
       } else if (request.action === 'requestWalletConnection') {
         // Handle wallet connection request from side panel
         this.connectWallet()
+      } else if (request.action === 'requestSignIn') {
+        // Handle sign in request when wallet is connected but backend auth failed
+        if (this.walletAddress && !this.jwtToken) {
+          this.handleBackendAuth()
+            .then(() => {
+              console.log("Backend auth successful after sign in request")
+              // Notify sidepanel about successful auth
+              chrome.runtime.sendMessage({
+                action: 'walletConnected',
+                walletAddress: this.walletAddress,
+                availableNames: this.availableNames,
+                selectedName: this.selectedName,
+                hasBackendAuth: !!this.jwtToken
+              }).catch(() => {})
+            })
+            .catch(error => {
+              console.error("Sign in failed:", error)
+              alert("Sign in failed. Please try again.")
+            })
+        } else if (!this.walletAddress) {
+          // Need to connect wallet first
+          this.connectWallet()
+        }
+      } else if (request.action === 'signOut') {
+        // Handle sign out request
+        this.disconnectWallet()
       } else if (request.action === 'sendMessage') {
         // Handle message sending request from side panel
         if (this.walletAddress) {
           this.selectedName = request.selectedName || this.selectedName
-          const messageInput = document.getElementById("messageInput")
-          if (messageInput) {
-            messageInput.value = request.content
-            this.sendMessage()
-          }
+          // Call sendMessage directly with the content
+          this.sendMessageFromSidepanel(request.content)
         }
       } else if (request.action === 'roomChange' && window.IS_STANDALONE_CHAT) {
         const { pair, market } = request

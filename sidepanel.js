@@ -269,7 +269,7 @@ async function syncWithContentScript() {
                             walletAddress = response.walletAddress;
                             availableNames = response.availableNames || [];
                             selectedName = response.selectedName || '';
-                            hasBackendAuth = true;
+                            hasBackendAuth = response.hasBackendAuth || false;
                         }
                         
                         console.log('✅ Synced with content script from tab:', {
@@ -349,24 +349,31 @@ function createChatUI() {
                             <button class="hl-connect-btn-small" id="requestWalletConnection">Request Connection</button>
                         </div>
                     </div>
-                    ` : `
+                    ` : hasBackendAuth ? `
                     <div class="hl-name-bar">
                         <label class="hl-name-label">As:</label>
                         <select id="hlNameSelect" class="hl-name-select-input">
                             <option value="" ${selectedName === '' ? 'selected' : ''}>${formatAddress(walletAddress)}</option>
                             ${availableNames.map(n => `<option value="${n}" ${n === selectedName ? 'selected' : ''}>${n}</option>`).join('')}
                         </select>
+                        <button id="signOutButton" class="hl-sign-out-btn" style="margin-left: 10px; padding: 4px 8px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Sign Out</button>
                     </div>
                     <div class="hl-chat-input-container">
                         <input 
                             type="text" 
                             class="hl-chat-input" 
                             id="messageInput" 
-                            placeholder="${hasBackendAuth ? `Chat with ${roomId} traders...` : 'Backend server not available - read-only mode'}"
+                            placeholder="Chat with ${roomId} traders..."
                             maxlength="250"
-                            ${!hasBackendAuth ? 'disabled' : ''}
                         />
-                        <button class="hl-send-btn" id="sendMessage" ${!hasBackendAuth ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>Send</button>
+                        <button class="hl-send-btn" id="sendMessage">Send</button>
+                    </div>
+                    ` : `
+                    <div class="hl-chat-auth-bar" id="chatAuthBar">
+                        <div class="hl-auth-message">
+                            <span>Wallet connected as ${formatAddress(walletAddress)}</span>
+                            <button class="hl-connect-btn-small" id="requestSignIn">Sign In to Chat</button>
+                        </div>
                     </div>
                     `}
                 </div>
@@ -417,10 +424,42 @@ function setupEventListeners() {
         });
     }
 
-    // Send message
+    // Send message (only exists when fully authenticated)
     const sendBtn = document.getElementById('sendMessage');
     if (sendBtn) {
         sendBtn.addEventListener('click', sendMessage);
+    }
+    
+    // Sign In button (when wallet connected but not authenticated)
+    const signInBtn = document.getElementById('requestSignIn');
+    if (signInBtn) {
+        signInBtn.addEventListener('click', async () => {
+            try {
+                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                if (tab && tab.url && tab.url.includes('app.hyperliquid.xyz')) {
+                    chrome.tabs.sendMessage(tab.id, { action: 'requestSignIn' });
+                } else {
+                    alert('Please navigate to app.hyperliquid.xyz/trade to sign in');
+                }
+            } catch (error) {
+                console.error('Failed to request sign in:', error);
+            }
+        });
+    }
+    
+    // Sign out button
+    const signOutBtn = document.getElementById('signOutButton');
+    if (signOutBtn) {
+        signOutBtn.addEventListener('click', async () => {
+            try {
+                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                if (tab && tab.url && tab.url.includes('app.hyperliquid.xyz')) {
+                    chrome.tabs.sendMessage(tab.id, { action: 'signOut' });
+                }
+            } catch (error) {
+                console.error('Failed to sign out:', error);
+            }
+        });
     }
 
     const messageInput = document.getElementById('messageInput');

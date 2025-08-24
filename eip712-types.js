@@ -3,15 +3,13 @@
 
 const EIP712_DOMAIN = {
   name: 'Hyperliquid Chat',
-  version: '1',
-  chainId: 1, // Ethereum mainnet (signatures work across chains)
+  version: '1'
 };
 
 // Domain type definition
 const EIP712_DOMAIN_TYPE = [
   { name: 'name', type: 'string' },
-  { name: 'version', type: 'string' },
-  { name: 'chainId', type: 'uint256' }
+  { name: 'version', type: 'string' }
 ];
 
 // Login message type
