@@ -32,7 +32,8 @@
         "wallet-bridge.js",
         "lib/waku-chat-client.js",
         "lib/js-waku.min.js",
-        "lib/protobuf.js",
+        "lib/protobufjs/minimal.js",
+        "lib/chat-message.js",
         "lib/chat-message.proto"
       ],
       "matches": ["https://app.hyperliquid.xyz/*"]

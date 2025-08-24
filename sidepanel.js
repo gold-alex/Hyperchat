@@ -822,14 +822,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 // Initialize when DOM is ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
+        console.log('TRACE: DOMContentLoaded event fired.');
         // Initialize Waku as primary, Supabase as fallback
-        initializeWaku();
+        //initializeWaku();
+        console.log('TRACE: initializeWaku() has been called...');
         // Only initialize Supabase if explicitly needed (for backward compatibility)
         // initializeSupabase();
+        initializeWaku().then(success => {
+            if (success) {
+                initializeChat();
+                console.log('TRACE: initializeChat() has been called, now proceeding.');
+            }
+        });
     });
 } else {
     // Initialize Waku as primary, Supabase as fallback
-    initializeWaku();
+    //initializeWaku();
     // Only initialize Supabase if explicitly needed (for backward compatibility)
     // initializeSupabase();
+    initializeWaku().then(success => {
+        if (success) {
+            initializeChat();
+            console.log('TRACE: initializeChat() has been called, now proceeding.');
+        }
+    });
 }

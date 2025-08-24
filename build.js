@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 // Load environment variables
 require('dotenv').config();
@@ -11,6 +12,31 @@ if (!fs.existsSync('.env')) {
   console.warn('\n⚠️  No .env file found. Using default configuration values.');
   console.warn('   See WAKU_CONFIG.md for instructions on how to configure Waku.\n');
 }
+
+// --- SCRIPT EXECUTION ---
+
+// 1. Run the protobuf compiler first.
+console.log('Compiling protobuf definition...');
+try {
+  // This command correctly generates `lib/chat-message.js` but with the wrong import path.
+  execSync('pnpm build:proto', { stdio: 'inherit' });
+  console.log('✅ Protobuf compilation successful.');
+} catch (error) {
+  console.error('❌ Protobuf compilation failed:', error);
+  process.exit(1);
+}
+
+// 2. Patch the generated file to fix the import path.
+console.log('Patching generated protobuf module for browser compatibility...');
+const protoJsPath = path.join(__dirname, 'lib/chat-message.js');
+let protoJsContent = fs.readFileSync(protoJsPath, 'utf8');
+protoJsContent = protoJsContent.replace(
+  'import * as $protobuf from "protobufjs/minimal";',          // <-- This is what pbjs generates
+  'import * as $protobuf from "./protobufjs/minimal.js";' // <-- This is the browser-compatible relative path
+);
+fs.writeFileSync(protoJsPath, protoJsContent);
+console.log('✅ Patched protobuf module successfully.');
+
 
 const sourceFiles = [
   'manifest.json',
@@ -24,10 +50,11 @@ const sourceFiles = [
   'wallet-bridge.js',
   'content.css',
   'content.js',
-  // 'supabase.js', // Commented out - no longer needed with Waku
+  // 'supabase.js', // No longer needed with Waku
   'lib/waku-chat-client.js',
   'lib/js-waku.min.js',
-  'lib/protobuf.js',
+  'lib/protobufjs/minimal.js',
+  'lib/chat-message.js',
   'lib/chat-message.proto',
 ];
 
