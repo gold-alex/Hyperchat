@@ -10,7 +10,8 @@ services:
     command:
       - --listen-address=0.0.0.0
       - --nat=extip:${PUBLIC_IP}
-      - --relay=false
+      - --dns4-domain-name=${WAKU_WSS_DOMAIN}
+      - --relay=true
       - --filter=true
       - --lightpush=true
       - --discv5-discovery=false
@@ -20,10 +21,11 @@ services:
       - --websocket-support=true
       - --websocket-port=8000
       - --cluster-id=999
+      - --shard=0
       - --nodekey=${NODE_KEY}
       - --store=true
       - --store-message-retention-policy=time:43200
-      - --store-message-db-url="sqlite:///var/db/waku_messages.db"
+      - --store-message-db-url="sqlite://var/db/waku_messages.db"
 
   caddy:
     image: caddy:2
