@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Direct Waku Test</title>
+</head>
+<body>
+    <h1>Direct Waku Connection Test</h1>
+    <div id="status">Loading...</div>
+    <button id="sendBtn" disabled>Send Test Message</button>
+    <pre id="logs"></pre>
+
+    <script type="module">
+        // Direct test without Chrome extension complexity
+        const WAKU_NODE_IP = "10.0.0.58";
+        const WAKU_NODE_PORT = 8000;
+        const WAKU_NODE_PEER_ID = "16Uiu2HAmU2WUEvnge3oFDg5kQYzffh4Tt19bmqytDcUeHHbBGHg1";
+        
+        const status = document.getElementById('status');
+        const logs = document.getElementById('logs');
+        const sendBtn = document.getElementById('sendBtn');
+        
+        function log(msg) {
+            console.log(msg);
+            logs.textContent += msg + '\n';
+        }
+        
+        async function testWaku() {
+            try {
+                log('Loading js-waku...');
+                const wakuModule = await import('./dist/lib/js-waku.min.js');
+                const { createLightNode } = wakuModule.default || wakuModule;
+                
+                const multiaddr = `/ip4/${WAKU_NODE_IP}/tcp/${WAKU_NODE_PORT}/ws/p2p/${WAKU_NODE_PEER_ID}`;
+                log(`Multiaddr: ${multiaddr}`);
+                
+                const clusterId = 999;
+                const shardId = 42000;
+                const pubSubTopic = `/waku/2/rs/${clusterId}/${shardId}`;
+                log(`PubSub topic: ${pubSubTopic}`);
+                
+                log('Creating Waku node...');
+                const waku = await createLightNode({
+                    defaultBootstrap: false,
+                    bootstrapPeers: [multiaddr],
+                    pubsubTopics: [pubSubTopic],
+                    shardInfo: {
+                        clusterId: clusterId,
+                        shards: [shardId]
+                    }
+                });
+                
+                log('Starting Waku node...');
+                await waku.start();
+                
+                log('Waiting for peers...');
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                
+                const peers = await waku.libp2p.getPeers();
+                log(`Connected peers: ${peers.length}`);
+                
+                if (peers.length > 0) {
+                    status.textContent = '✅ Connected to Waku!';
+                    sendBtn.disabled = false;
+                    
+                    // Test lightpush
+                    sendBtn.onclick = async () => {
+                        try {
+                            log('Sending test message...');
+                            const contentTopic = '/test/1/message/proto';
+                            const payload = new TextEncoder().encode('Test message ' + Date.now());
+                            
+                            await waku.lightPush.send({
+                                contentTopic,
+                                payload,
+                                pubSubTopic
+                            });
+                            
+                            log('✅ Message sent!');
+                        } catch (e) {
+                            log('❌ Send failed: ' + e.message);
+                        }
+                    };
+                } else {
+                    status.textContent = '❌ No peers connected';
+                    log('Connection failed - no peers');
+                    
+                    // Try to see what's happening
+                    const connections = waku.libp2p.getConnections();
+                    log('Connections: ' + JSON.stringify(connections));
+                }
+                
+            } catch (error) {
+                status.textContent = '❌ Error: ' + error.message;
+                log('Error: ' + error.message);
+                log('Stack: ' + error.stack);
+            }
+        }
+        
+        testWaku();
+    </script>
+</body>
+</html>

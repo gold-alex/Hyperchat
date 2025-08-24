@@ -6,7 +6,7 @@
   "permissions": ["activeTab", "storage", "scripting", "sidePanel", "contextMenus"],
   "host_permissions": [
     "https://app.hyperliquid.xyz/*",
-    "ws://10.0.0.5:60000/"
+    "ws://10.0.0.58:8000/"
   ],
   "content_scripts": [
     {
@@ -33,6 +33,7 @@
         "lib/waku-chat-client.js",
         "lib/js-waku.min.js",
         "lib/protobufjs/minimal.js",
+        "lib/protobuf-wrapper.js",
         "lib/chat-message.js",
         "lib/chat-message.proto"
       ],

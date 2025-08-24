@@ -53,12 +53,15 @@ async function initializeWaku() {
         const success = await wakuClient.initialize();
         if (success) {
             console.log('✅ Waku client initialized successfully');
+            return true;
         } else {
             console.error('❌ Failed to initialize Waku client');
+            return false;
         }
 
     } catch (error) {
         console.error('❌ Failed to initialize Waku:', error);
+        return false;
     }
 }
 
@@ -204,8 +207,15 @@ async function initializeChat() {
         `;
     }
 
-    // Check if we need to navigate to trade page
-    await checkAndNavigateToTrade();
+    // Check if we need to navigate to trade page (with timeout)
+    try {
+        await Promise.race([
+            checkAndNavigateToTrade(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Navigation timeout')), 3000))
+        ]);
+    } catch (error) {
+        console.log('Navigation check failed or timed out, continuing anyway:', error.message);
+    }
 
     // Restore wallet connection state if it exists
     await restoreWalletConnection();
@@ -224,10 +234,22 @@ async function initializeChat() {
         }
     }
     
-    // If we still don't have data after all attempts, use defaults but don't show UNKNOWN
+    // If we still don't have data after all attempts, use defaults and create UI anyway
     if (!hasLoadedInitialData) {
-        console.log('Could not sync with content script, waiting for data...');
-        // Don't create UI yet - wait for sync from periodic interval
+        console.log('Could not sync with content script, using defaults');
+        currentPair = 'HYPE-USD';
+        currentMarket = 'Perps';
+        hasLoadedInitialData = true;
+        
+        // Create UI with defaults
+        createChatUI();
+        setupEventListeners();
+        
+        // Try to load history if Waku is available
+        if (wakuClient) {
+            loadChatHistory();
+            subscribeBroadcast();
+        }
     }
 
     // Listen for room changes from content script and mode changes
@@ -632,6 +654,18 @@ async function sendMessage() {
             const timestamp = Date.now();
             const dataToSign = JSON.stringify({ timestamp, content });
             
+            // First, ensure content script is injected
+            try {
+                await chrome.scripting.executeScript({
+                    target: { tabId: tab.id },
+                    files: ['content.js']
+                });
+                // Wait a bit for content script to initialize
+                await new Promise(resolve => setTimeout(resolve, 500));
+            } catch (e) {
+                console.log('Content script may already be injected');
+            }
+            
             const response = await chrome.tabs.sendMessage(tab.id, {
                 action: 'signMessage',
                 message: dataToSign
@@ -829,10 +863,9 @@ if (document.readyState === 'loading') {
         // Only initialize Supabase if explicitly needed (for backward compatibility)
         // initializeSupabase();
         initializeWaku().then(success => {
-            if (success) {
-                initializeChat();
-                console.log('TRACE: initializeChat() has been called, now proceeding.');
-            }
+            // Initialize chat regardless of Waku success (can fall back to Supabase)
+            initializeChat();
+            console.log('TRACE: initializeChat() has been called, Waku success:', success);
         });
     });
 } else {

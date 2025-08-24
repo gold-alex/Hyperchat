@@ -1321,6 +1321,18 @@ class HyperliquidChat {
             this.sendMessage()
           }
         }
+      } else if (request.action === 'signMessage') {
+        // Sign a message for Waku - use the existing bridge mechanism
+        if (this.walletAddress) {
+          this.signMessage(request.message).then(signature => {
+            sendResponse({ signature });
+          }).catch(error => {
+            sendResponse({ error: error.message });
+          });
+          return true; // Keep channel open for async response
+        } else {
+          sendResponse({ error: 'Wallet not connected' });
+        }
       } else if (request.action === 'roomChange' && window.IS_STANDALONE_CHAT) {
         const { pair, market } = request
         if (!pair || !market) return

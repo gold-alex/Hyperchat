@@ -32,7 +32,7 @@ const protoJsPath = path.join(__dirname, 'lib/chat-message.js');
 let protoJsContent = fs.readFileSync(protoJsPath, 'utf8');
 protoJsContent = protoJsContent.replace(
   'import * as $protobuf from "protobufjs/minimal";',          // <-- This is what pbjs generates
-  'import * as $protobuf from "./protobufjs/minimal.js";' // <-- This is the browser-compatible relative path
+  'import * as $protobuf from "./protobuf-wrapper.js";' // <-- Use our wrapper
 );
 fs.writeFileSync(protoJsPath, protoJsContent);
 console.log('✅ Patched protobuf module successfully.');
@@ -54,6 +54,7 @@ const sourceFiles = [
   'lib/waku-chat-client.js',
   'lib/js-waku.min.js',
   'lib/protobufjs/minimal.js',
+  'lib/protobuf-wrapper.js',
   'lib/chat-message.js',
   'lib/chat-message.proto',
 ];
@@ -64,7 +65,7 @@ const envVars = {
   'process.env.SUPABASE_ANON_KEY': JSON.stringify(process.env.SUPABASE_ANON_KEY),
   'process.env.BACKEND_PORT': process.env.BACKEND_PORT,
   'process.env.WAKU_NODE_IP': JSON.stringify(process.env.WAKU_NODE_IP || '10.0.0.5'),
-  'process.env.WAKU_NODE_PORT': process.env.WAKU_NODE_PORT || 60000,
+  'process.env.WAKU_NODE_PORT': process.env.WAKU_NODE_PORT || 8000,
   'process.env.WAKU_NODE_PEER_ID': JSON.stringify(process.env.WAKU_NODE_PEER_ID || '16Uiu2HAm4v86W3bmT1BiH6oSPzcsSr24iDQpSN5Qa992BCjjwgrD')
 };
 
