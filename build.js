@@ -35,7 +35,7 @@ protoJsContent = protoJsContent.replace(
   'import * as $protobuf from "./protobuf-wrapper.js";' // <-- Use our wrapper
 );
 fs.writeFileSync(protoJsPath, protoJsContent);
-console.log('✅ Patched protobuf module successfully.');
+console.log('Patched protobuf module successfully.');
 
 
 const sourceFiles = [
@@ -50,7 +50,6 @@ const sourceFiles = [
   'wallet-bridge.js',
   'content.css',
   'content.js',
-  // 'supabase.js', // No longer needed with Waku
   'lib/waku-chat-client.js',
   'lib/js-waku.min.js',
   'lib/protobufjs/minimal.js',
@@ -61,8 +60,6 @@ const sourceFiles = [
 
 // Environment variables to substitute
 const envVars = {
-  'process.env.SUPABASE_URL': JSON.stringify(process.env.SUPABASE_URL),
-  'process.env.SUPABASE_ANON_KEY': JSON.stringify(process.env.SUPABASE_ANON_KEY),
   'process.env.BACKEND_PORT': process.env.BACKEND_PORT,
   'process.env.WAKU_NODE_URI': JSON.stringify(process.env.WAKU_NODE_URI || 'localhost'),
   'process.env.WAKU_NODE_PORT': process.env.WAKU_NODE_PORT || 443,
@@ -107,18 +104,7 @@ sourceFiles.forEach(file => {
 console.log('\n✅ Build completed successfully!');
 console.log('Environment variables used:');
 
-// Group variables by type
-const supabaseVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'BACKEND_PORT'];
 const wakuVars = ['WAKU_NODE_URL', 'WAKU_NODE_PORT', 'WAKU_NODE_PEER_ID'];
-
-// Display Supabase variables (legacy)
-console.log('\n  Supabase Configuration (Legacy):');
-supabaseVars.forEach(envKey => {
-  const key = `process.env.${envKey}`;
-  const value = envVars[key];
-  const displayValue = typeof value === 'string' && value.length > 50 ? value.substring(0, 47) + '...' : value;
-  console.log(`    ${envKey}: ${displayValue}`);
-});
 
 // Display Waku variables
 console.log('\n  Waku Configuration:');

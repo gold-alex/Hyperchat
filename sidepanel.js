@@ -13,7 +13,6 @@ let currentPair = initialPair;
 let currentMarket = initialMarket;
 let walletAddress = '';
 let messages = [];
-let supabase = null;
 let wakuClient = null;
 let chatInstance = null;
 let availableNames = [];
@@ -26,9 +25,7 @@ let hasLoadedInitialData = false;
 // Initialize Waku client
 async function initializeWaku() {
     try {
-        console.log('Importing WakuChatClient...');
         const wakuModule = await import(chrome.runtime.getURL('lib/waku-chat-client.js'));
-        console.log('✅ WakuChatClient imported');
 
         // Create Waku client with configuration
         wakuClient = new wakuModule.WakuChatClient({
@@ -52,15 +49,15 @@ async function initializeWaku() {
         // Initialize the Waku client
         const success = await wakuClient.initialize();
         if (success) {
-            console.log('✅ Waku client initialized successfully');
+            console.log('Waku client initialized successfully');
             return true;
         } else {
-            console.error('❌ Failed to initialize Waku client');
+            console.error('Failed to initialize Waku client');
             return false;
         }
 
     } catch (error) {
-        console.error('❌ Failed to initialize Waku:', error);
+        console.error('Failed to initialize Waku:', error);
         return false;
     }
 }
@@ -95,37 +92,6 @@ function handleConnectionStatusChange(connected) {
     }
 }
 
-// Initialize Supabase
-async function initializeSupabase() {
-    console.log('Importing Supabase library...');
-
-    try {
-        const supabaseModule = await import(chrome.runtime.getURL('supabase.js'));
-        console.log('✅ Supabase module imported');
-
-        let createClient = null;
-        if (supabaseModule?.supabase?.createClient) {
-            createClient = supabaseModule.supabase.createClient;
-        } else if (supabaseModule?.createClient) {
-            createClient = supabaseModule.createClient;
-        } else if (typeof window !== 'undefined' && window.supabase?.createClient) {
-            createClient = window.supabase.createClient;
-        }
-
-        if (createClient) {
-            const SUPABASE_URL = process.env.SUPABASE_URL;
-            const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
-            supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-            console.log('✅ Supabase client created successfully');
-        } else {
-            console.error('❌ Could not locate createClient after importing Supabase');
-        }
-    } catch (error) {
-        console.error('❌ Failed to import Supabase library:', error);
-    }
-
-    initializeChat();
-}
 
 // Check if we're on trade page and navigate if not
 async function checkAndNavigateToTrade() {
@@ -259,9 +225,6 @@ async function initializeChat() {
             currentMarket = request.market;
             updateChatHeader();
             loadChatHistory();
-            if (realtimeChannel) {
-                supabase.removeChannel(realtimeChannel);
-            }
             subscribeBroadcast();
         } else if (request.action === 'closeSidePanel') {
             // Close the side panel when switching to floating mode
@@ -286,9 +249,6 @@ async function initializeChat() {
                     scrollToBottom();
                     
                     // Re-subscribe to the new room
-                    if (realtimeChannel) {
-                        supabase.removeChannel(realtimeChannel);
-                    }
                     subscribeBroadcast();
                 }
             }
@@ -540,90 +500,38 @@ function setupEventListeners() {
 
 // Load chat history
 async function loadChatHistory() {
-    // Use Waku if available, otherwise fall back to Supabase
-    if (wakuClient) {
-        try {
-            // Set the current room in the Waku client
-            wakuClient.setRoom(currentPair, currentMarket);
-            await wakuClient.loadHistoryWithRetry();
-            return;
-        } catch (error) {
-            console.error('Failed to load history from Waku:', error);
-        }
-    }
-    
-    // Legacy Supabase fallback
-    if (!supabase) {
-        console.warn('Neither Waku nor Supabase available for history loading');
+    // Use Waku for real-time messaging
+    if (!wakuClient) {
+        console.warn('Waku client not available - cannot load chat history');
+        updateMessagesUI('<div class="hl-error">Waku client not available</div>');
         return;
     }
 
-    const roomId = `${currentPair}_${currentMarket}`;
-    console.log(`Loading chat history for room: ${roomId}`);
-
     try {
-        const { data, error } = await supabase
-            .from('messages')
-            .select('*')
-            .eq('room', roomId)
-            .order('timestamp', { ascending: true });
-
-        if (error) {
-            console.error('Error loading chat history:', error);
-            updateMessagesUI('<div class="hl-error">Failed to load chat history</div>');
-            return;
-        }
-
-        messages = data || [];
-        updateMessagesUI();
-        scrollToBottom();
-
+        // Set the current room in the Waku client
+        wakuClient.setRoom(currentPair, currentMarket);
+        await wakuClient.loadHistoryWithRetry();
     } catch (error) {
+        console.error('Failed to load history from Waku:', error);
         updateMessagesUI('<div class="hl-error">Failed to load chat history</div>');
     }
 }
 
 // Subscribe to real-time updates
 function subscribeBroadcast() {
-    // Use Waku if available, otherwise fall back to Supabase
-    if (wakuClient) {
-        try {
-            // Set the current room in the Waku client
-            wakuClient.setRoom(currentPair, currentMarket);
-            wakuClient.subscribe();
-            return;
-        } catch (error) {
-            console.error('Failed to subscribe to Waku messages:', error);
-        }
-    }
-    
-    // Legacy Supabase fallback
-    if (!supabase) {
-        console.warn('Neither Waku nor Supabase available for subscription');
+    // Use Waku for real-time messaging
+    if (!wakuClient) {
+        console.warn('Waku client not available - real-time messaging disabled');
         return;
     }
 
-    const roomId = `${currentPair}_${currentMarket}`;
-    console.log(`Subscribing to broadcast for room: ${roomId}`);
-
-    const channel = supabase.channel(`room_${roomId}`, {
-        config: { broadcast: { ack: true } },
-    })
-    .on('broadcast', { event: 'new-message' }, (payload) => {
-        console.log('Received broadcast message:', payload);
-        const msg = payload.payload;
-
-        if (msg.room === roomId && msg.address !== walletAddress) {
-            messages.push(msg);
-            updateMessagesUI();
-            scrollToBottom();
-        }
-    })
-    .subscribe((status) => {
-        console.log(`Broadcast subscription status for ${roomId}:`, status);
-    });
-
-    realtimeChannel = channel;
+    try {
+        // Set the current room in the Waku client
+        wakuClient.setRoom(currentPair, currentMarket);
+        wakuClient.subscribe();
+    } catch (error) {
+        console.error('Failed to subscribe to Waku messages:', error);
+    }
 }
 
 // Send message (delegate to content script)
@@ -860,19 +768,13 @@ if (document.readyState === 'loading') {
         // Initialize Waku as primary, Supabase as fallback
         //initializeWaku();
         console.log('TRACE: initializeWaku() has been called...');
-        // Only initialize Supabase if explicitly needed (for backward compatibility)
-        // initializeSupabase();
         initializeWaku().then(success => {
-            // Initialize chat regardless of Waku success (can fall back to Supabase)
+            // Initialize chat - Waku only, no Supabase fallback
             initializeChat();
             console.log('TRACE: initializeChat() has been called, Waku success:', success);
         });
     });
 } else {
-    // Initialize Waku as primary, Supabase as fallback
-    //initializeWaku();
-    // Only initialize Supabase if explicitly needed (for backward compatibility)
-    // initializeSupabase();
     initializeWaku().then(success => {
         if (success) {
             initializeChat();

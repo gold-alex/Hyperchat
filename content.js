@@ -1,70 +1,18 @@
 // Content script that runs on Hyperliquid pages
 
 // Configuration - these should be replaced at build time
-const SUPABASE_URL = process.env.SUPABASE_URL
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY
 const WAKU_NODE_URI = process.env.WAKU_NODE_URI
 const WAKU_NODE_PORT = process.env.WAKU_NODE_PORT
 const WAKU_NODE_PEER_ID = process.env.WAKU_NODE_PEER_ID
 const BACKEND_PORT = process.env.BACKEND_PORT || 3001
 
-let supabase;
 let wakuClient;
 let chatInstance;
-
-// Initialize Supabase and then start the chat
-function initializeSupabase() {
-    console.log('Importing Supabase library via dynamic import...');
-
-    // Use dynamic import so that the library executes in the same
-    // (isolated) world as the content-script. This avoids page-level CSP
-    // issues and also lets us access the exported symbols directly.
-    import(chrome.runtime.getURL('supabase.js'))
-        .then((supabaseModule) => {
-            console.log('✅ Supabase module imported');
-
-            // "supabase.js" is distributed as a UMD bundle. Depending on how
-            // the loader evaluates, `createClient` can live in different
-            // places. We try the common fall-backs below.
-            let createClient = null;
-
-            if (supabaseModule?.supabase?.createClient) {
-                // ESM import returned the namespace with `supabase` property.
-                createClient = supabaseModule.supabase.createClient;
-                console.log('Found createClient on supabaseModule.supabase');
-            } else if (supabaseModule?.createClient) {
-                // ESM import directly returned the exports object.
-                createClient = supabaseModule.createClient;
-                console.log('Found createClient on supabaseModule');
-            } else if (typeof window !== 'undefined' && window.supabase?.createClient) {
-                // UMD bundle attached `supabase` to the global object.
-                createClient = window.supabase.createClient;
-                console.log('Found createClient on window.supabase');
-            }
-
-            if (createClient) {
-                supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-                console.log('✅ Supabase client created successfully');
-            } else {
-                console.error('❌ Could not locate createClient after importing Supabase');
-            }
-        })
-        .catch((error) => {
-            console.error('❌ Failed to import Supabase library:', error);
-        })
-        .finally(() => {
-            // Proceed with chat initialisation regardless, so the extension
-            // still functions (in read-only mode if Supabase isn't available).
-            initializeChat();
-        });
-}
 
 // Initialize Waku client
 async function initializeWaku() {
     try {
-        console.log('Importing WakuChatClient...');
         const wakuModule = await import(chrome.runtime.getURL('lib/waku-chat-client.js'));
-        console.log('✅ WakuChatClient imported');
 
         // Create Waku client with configuration
         wakuClient = new wakuModule.WakuChatClient({
@@ -94,13 +42,13 @@ async function initializeWaku() {
         // Initialize the Waku client
         const success = await wakuClient.initialize();
         if (success) {
-            console.log('✅ Waku client initialized successfully');
+            console.log('Waku client initialized successfully');
         } else {
-            console.error('❌ Failed to initialize Waku client');
+            console.error('Failed to initialize Waku client');
         }
 
     } catch (error) {
-        console.error('❌ Failed to initialize Waku:', error);
+        console.error('Failed to initialize Waku:', error);
     } finally {
         initializeChat();
     }
@@ -109,7 +57,6 @@ async function initializeWaku() {
 // Initialize the chat once everything is ready
 function initializeChat() {
     chatInstance = new HyperliquidChat();
-    chatInstance.supabase = supabase; // Pass the Supabase instance for fallback
     chatInstance.wakuClient = wakuClient; // Pass the Waku client
     chatInstance.init();
 }
@@ -121,7 +68,6 @@ class HyperliquidChat {
     this.currentMarket = ""
     this.walletAddress = ""
     this.messages = []
-    this.supabase = null
     this.wakuClient = null
     this.jwtToken = null
     // Add HL names state
@@ -459,7 +405,7 @@ class HyperliquidChat {
       })
       .join("")
 
-    console.log(`✅ Rendered HTML for ${this.messages.length} messages (${rendered.length} chars)`)
+    //console.log(`Rendered HTML for ${this.messages.length} messages (${rendered.length} chars)`)
     return rendered
   }
 
@@ -742,10 +688,7 @@ class HyperliquidChat {
         await this.loadChatHistoryWithRetry()
         console.log("Setting up broadcast subscription...")
 
-        // Unsubscribe from old channel first
-        if (this.realtimeChannel) {
-          this.supabase.removeChannel(this.realtimeChannel)
-        }
+        // Waku handles room switching automatically via setRoom()
         this.subscribeBroadcast()
 
         console.log("Chat setup complete!")
@@ -782,33 +725,13 @@ class HyperliquidChat {
   }
 
   async loadChatHistoryWithRetry(maxRetries = 3) {
-    // Use Waku if available, otherwise fall back to Supabase
-    if (this.wakuClient) {
-      return this.loadChatHistoryFromWakuWithRetry(maxRetries);
+    // Use Waku for real-time messaging
+    if (!this.wakuClient) {
+      console.warn('Waku client not available - cannot load chat history');
+      throw new Error('Waku client not available');
     }
-    
-    // Legacy Supabase fallback
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        console.log(`Loading chat history attempt ${attempt}/${maxRetries}`)
-        await this.loadChatHistoryFromSupabase()
-        return // Success, exit retry loop
-      } catch (error) {
-        console.error(`Chat history load attempt ${attempt} failed:`, error)
 
-        if (attempt === maxRetries) {
-          // Final attempt failed
-          const messagesContainer = document.getElementById("chatMessages")
-          if (messagesContainer) {
-            messagesContainer.innerHTML = `<div class="hl-error">Failed to load chat after ${maxRetries} attempts. <button onclick="location.reload()">Refresh Page</button></div>`
-          }
-          throw error
-        }
-
-        // Wait before retry (exponential backoff)
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
-      }
-    }
+    return this.loadChatHistoryFromWakuWithRetry(maxRetries);
   }
 
   async loadChatHistoryFromWakuWithRetry(maxRetries = 3) {
@@ -842,134 +765,14 @@ class HyperliquidChat {
     }
   }
 
-  async loadChatHistoryFromSupabase() {
-    const roomId = `${this.currentPair}_${this.currentMarket}`
-    console.log(`Loading chat history for room: "${roomId}"`)
-    console.log(`Current pair: "${this.currentPair}", market: "${this.currentMarket}"`)
-
-    // Make sure we have a valid room ID
-    if (!this.currentPair || this.currentPair === "UNKNOWN") {
-      console.warn("❌ Cannot load chat history - trading pair not detected yet")
-      return
-    }
-
-    // Check if Supabase is initialized
-    if (!this.supabase) {
-      console.error("❌ Supabase client not initialized!")
-      return
-    }
-
-    console.log("✅ Supabase client is initialized")
-
-    try {
-      console.log(`Querying Supabase for room: "${roomId}"`)
-      console.log(`Query: SELECT * FROM messages WHERE room = '${roomId}' ORDER BY timestamp ASC`)
-
-      const { data, error } = await this.supabase
-        .from('messages')
-        .select('*')
-        .eq('room', roomId)
-        .order('timestamp', { ascending: true })
-
-      console.log('Supabase response:', { data, error })
-
-      if (error) {
-        console.error('❌ Supabase load error:', error)
-        console.error('❌ Error details:', {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code
-        })
-
-        // Show error in chat if it's a critical issue
-        const messagesContainer = document.getElementById("chatMessages")
-        if (messagesContainer && error.code !== 'PGRST116') { // PGRST116 = table doesn't exist, handle gracefully
-          messagesContainer.innerHTML = `<div class="hl-error">Database error: ${error.message}</div>`
-        }
-        throw error // Re-throw to be caught by caller
-      }
-
-      console.log(`✅ Query successful! Found ${data ? data.length : 0} messages for room "${roomId}"`)
-
-      if (data && data.length > 0) {
-        console.log('First message sample:', data[0])
-        console.log('All message contents:', data.map(m => ({ content: m.content, timestamp: m.timestamp })))
-      } else {
-        console.log('ℹ️ No messages found for this room')
-      }
-
-      // Always set messages (even if empty array)
-      this.messages = data || []
-      console.log(`✅ Set this.messages to array with ${this.messages.length} items`)
-
-      // Update the UI
-      const messagesContainer = document.getElementById("chatMessages")
-      console.log('Messages container element:', messagesContainer)
-
-      if (messagesContainer) {
-        if (this.messages.length === 0) {
-          const noMessagesHTML = `<div class="hl-loading">No messages yet in ${roomId}. Be the first to chat!</div>`
-          console.log('Setting no messages HTML:', noMessagesHTML)
-          messagesContainer.innerHTML = noMessagesHTML
-        } else {
-          const renderedHTML = this.renderMessages()
-          console.log('Rendered messages HTML:', renderedHTML)
-          messagesContainer.innerHTML = renderedHTML
-          this.scrollToBottom()
-          console.log('✅ Updated chat UI with messages and scrolled to bottom')
-        }
-      } else {
-        console.error("❌ Messages container not found in DOM!")
-        console.log('Available elements with IDs:', Array.from(document.querySelectorAll('[id]')).map(el => el.id))
-      }
-
-    } catch (err) {
-      console.error('❌ Failed to load chat history:', err)
-      throw err // Re-throw to be handled by caller
-    }
-  }
-
-
-
   subscribeBroadcast() {
-    // Use Waku if available, otherwise fall back to Supabase
-    if (this.wakuClient) {
-      this.subscribeToMessages();
+    // Use Waku for real-time messaging
+    if (!this.wakuClient) {
+      console.warn('Waku client not available - real-time messaging disabled');
       return;
     }
-    
-    // Legacy Supabase fallback
-    if (!this.supabase) {
-      console.warn('Neither Waku nor Supabase available for subscription');
-      return;
-    }
-    
-    const roomId = `${this.currentPair}_${this.currentMarket}`
-    console.log(`Subscribing to broadcast for room: ${roomId}`)
 
-    const channel = this.supabase.channel(`room_${roomId}`, {
-      config: { broadcast: { ack: true } },
-    })
-      .on('broadcast', { event: 'new-message' }, (payload) => {
-        console.log('Received broadcast message:', payload)
-        const msg = payload.payload
-
-        // Only show messages for the current room and not from ourselves
-        if (msg.room === roomId && msg.address !== this.walletAddress) {
-          console.log('Adding message to UI:', msg)
-          this.messages.push(msg)
-          document.getElementById("chatMessages").innerHTML = this.renderMessages()
-          this.scrollToBottom()
-        } else {
-          console.log('Ignoring message - wrong room or own message')
-        }
-      })
-      .subscribe((status) => {
-        console.log(`Broadcast subscription status for ${roomId}:`, status)
-      })
-
-    this.realtimeChannel = channel
+    this.subscribeToMessages();
   }
 
   async subscribeToMessages() {
@@ -1207,12 +1010,7 @@ class HyperliquidChat {
           messagesContainer.innerHTML = '<div class="hl-loading">Switching to ' + newRoomId + '...</div>'
         }
 
-        // Clean up old subscription
-        if (this.supabase && this.realtimeChannel) {
-          console.log(`Unsubscribing from old room: ${oldRoomId}`)
-          this.supabase.removeChannel(this.realtimeChannel)
-          this.realtimeChannel = null
-        }
+        // Waku handles room switching automatically
 
         // Notify all extensions (background, sidepanel, standalone windows)
         chrome.runtime.sendMessage({ 
@@ -1354,16 +1152,10 @@ class HyperliquidChat {
         const messagesContainer = document.getElementById('chatMessages')
         if (messagesContainer) messagesContainer.innerHTML = '<div class="hl-loading">Loading…</div>'
 
-        // Supabase channel switch
-        if (this.supabase && this.realtimeChannel) {
-          this.supabase.removeChannel(this.realtimeChannel)
-          this.realtimeChannel = null
-        }
-        if (this.supabase) {
-          this.loadChatHistoryWithRetry().then(()=>{
-            this.subscribeBroadcast()
-          })
-        }
+        // Waku handles room switching automatically
+        this.loadChatHistoryWithRetry().then(()=>{
+          this.subscribeBroadcast()
+        })
       } else if (request.action === 'syncMessages') {
         // Sync messages with side panel
         sendResponse({ 
@@ -1486,16 +1278,12 @@ class HyperliquidChat {
 // Initialize chat when page loads
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => {
-    // Initialize Waku as primary, Supabase as fallback
-    initializeWaku();
-    // Only initialize Supabase if explicitly needed (for backward compatibility)
-    // initializeSupabase();
+    // Initialize Waku
+    initializeWaku()
   })
 } else {
-  // Initialize Waku as primary, Supabase as fallback
-  initializeWaku();
-  // Only initialize Supabase if explicitly needed (for backward compatibility)
-  // initializeSupabase();
+  // Initialize Waku
+  initializeWaku()
 }
 
 // Export for testing purposes
