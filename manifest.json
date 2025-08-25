@@ -3,11 +3,12 @@
   "name": "Hyperliquid Chat",
   "version": "1.0.0",
   "description": "Chat with traders on Hyperliquid",
-  "permissions": ["activeTab", "storage", "scripting"],
+  "permissions": ["activeTab", "storage", "scripting", "sidePanel"],
   "host_permissions": [
     "https://app.hyperliquid.xyz/*",
+    "https://api.hyperliquid.xyz/*",
     "https://gwxiafgocfqjyapgqfnl.supabase.co/*",
-    "http://localhost:3001/*"
+    "http://localhost:3002/*"
   ],
   "content_scripts": [
     {
@@ -20,12 +21,14 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "Hyperliquid Chat"
+    "default_title": "Open Hyperliquid Chat"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
   "web_accessible_resources": [
     {
-      "resources": ["chat-widget.html", "chat-widget.js", "wallet-bridge.js", "supabase.js"],
+      "resources": ["chat-widget.html", "chat-widget.js", "wallet-bridge.js", "supabase.js", "pnl-service.js", "eip712-types.js", "links-config.js", "links-config-global.js"],
       "matches": ["https://app.hyperliquid.xyz/*"]
     }
   ]

@@ -46,7 +46,7 @@ function createJwt(address) {
 // Endpoint to authenticate wallet once and return JWT
 app.post('/auth', async (req, res) => {
   try {
-    const { address, signature, timestamp } = req.body;
+    const { address, signature, timestamp, typedData } = req.body;
     if (!address || !signature || !timestamp) {
       return res.status(400).json({ error: 'address, signature, timestamp required' });
     }
@@ -56,8 +56,31 @@ app.post('/auth', async (req, res) => {
       return res.status(400).json({ error: 'stale timestamp' });
     }
 
-    const message = `HyperLiquidChat login ${timestamp}`;
-    const recovered = ethers.verifyMessage(message, signature);
+    let recovered;
+    
+    if (typedData) {
+      // EIP-712 typed data signature verification
+      try {
+        // Remove EIP712Domain from types for ethers v6
+        const types = { ...typedData.types };
+        delete types.EIP712Domain;
+        
+        recovered = ethers.verifyTypedData(
+          typedData.domain,
+          types,
+          typedData.message,
+          signature
+        );
+      } catch (err) {
+        console.error('EIP-712 verification failed:', err);
+        return res.status(400).json({ error: 'invalid typed data signature' });
+      }
+    } else {
+      // Fallback to plain message signature
+      const message = `HyperLiquidChat login ${timestamp}`;
+      recovered = ethers.verifyMessage(message, signature);
+    }
+    
     if (recovered.toLowerCase() !== address.toLowerCase()) {
       return res.status(400).json({ error: 'signature mismatch' });
     }
@@ -129,19 +152,54 @@ app.get('/health', (_req, res) => {
 
 app.post('/message', async (req, res) => {
   try {
-    const { signature, message } = req.body;
-    if (!signature || !message) {
-      return res.status(400).json({ error: 'signature and message required' });
+    const { signature, message, typedData, address: reqAddress, name, pair, market } = req.body;
+    
+    let msgObj, recovered;
+    
+    if (typedData) {
+      // EIP-712 typed data format
+      msgObj = {
+        address: typedData.message.address || reqAddress,
+        name: typedData.message.name || name,
+        content: typedData.message.content,
+        timestamp: Number(typedData.message.timestamp),
+        pair: typedData.message.pair || pair,
+        market: typedData.message.market || market,
+        nonce: typedData.message.nonce,
+        room: typedData.message.room
+      };
+      
+      try {
+        // Remove EIP712Domain from types for ethers v6
+        const types = { ...typedData.types };
+        delete types.EIP712Domain;
+        
+        recovered = ethers.verifyTypedData(
+          typedData.domain,
+          types,
+          typedData.message,
+          signature
+        );
+      } catch (err) {
+        console.error('EIP-712 message verification failed:', err);
+        return res.status(400).json({ error: 'invalid typed data signature' });
+      }
+    } else {
+      // Legacy plain message format
+      if (!message) {
+        return res.status(400).json({ error: 'signature and message required' });
+      }
+      msgObj = JSON.parse(message);
+      recovered = ethers.verifyMessage(message, signature);
     }
-
-    const msgObj = JSON.parse(message);
-    const { address, name, content, timestamp, pair, market, nonce, room } = msgObj;
-    if (!address || !content || !timestamp || !pair || !market || !nonce || !room) {
+    
+    const { address, room, nonce } = msgObj;
+    if (!address || !msgObj.content || !msgObj.timestamp || !msgObj.pair || !msgObj.market || !nonce || !room) {
       return res.status(400).json({ error: 'invalid message fields' });
     }
 
     // Replay prevention: timestamp freshness 5 min
-    if (Math.abs(Date.now() - timestamp) > 5 * 60 * 1000) {
+    if (Math.abs(Date.now() - msgObj.timestamp) > 5 * 60 * 1000) {
       return res.status(400).json({ error: 'stale timestamp' });
     }
 
@@ -151,7 +209,6 @@ app.post('/message', async (req, res) => {
     }
 
     // Verify signature recovers address
-    const recovered = ethers.verifyMessage(message, signature);
     if (recovered.toLowerCase() !== address.toLowerCase()) {
       return res.status(400).json({ error: 'signature mismatch' });
     }
@@ -175,7 +232,15 @@ app.post('/message', async (req, res) => {
     // Insert into Supabase 'messages' table (assumes exists with RLS allow select)
     const { error: dbError } = await supabase
       .from('messages')
-      .insert({ room, address, name, content, timestamp, pair, market });
+      .insert({ 
+        room: msgObj.room || room,
+        address: msgObj.address || address,
+        name: msgObj.name || name,
+        content: msgObj.content,
+        timestamp: msgObj.timestamp,
+        pair: msgObj.pair,
+        market: msgObj.market
+      });
     if (dbError) {
       console.error('Supabase insert error:', dbError);
       return res.status(500).json({ error: 'db insert failed' });

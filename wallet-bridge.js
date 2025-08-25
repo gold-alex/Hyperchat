@@ -40,9 +40,11 @@
         }
 
         // Request account access
+        console.log('[BRIDGE] eth_requestAccounts')
         const accounts = await provider.request({
           method: 'eth_requestAccounts'
         });
+        console.log('[BRIDGE] accounts', accounts)
 
         // Send response back to content script
         window.postMessage({
@@ -67,11 +69,42 @@
           throw new Error('No Ethereum wallet found.');
         }
 
-        // Sign the message
-        const signature = await provider.request({
-          method: 'personal_sign',
-          params: [event.data.message, event.data.address]
-        });
+        // Ensure we use the provider's currently selected address
+        let accounts = [];
+        try {
+          console.log('[BRIDGE] eth_accounts')
+          accounts = await provider.request({ method: 'eth_accounts' });
+        } catch (_) {
+          // Some providers require requestAccounts prior to fetching accounts
+          console.log('[BRIDGE] eth_requestAccounts (fallback)')
+          accounts = await provider.request({ method: 'eth_requestAccounts' });
+        }
+        const from = Array.isArray(accounts) && accounts.length > 0 ? accounts[0] : event.data.address;
+        console.log('[BRIDGE] using from', from)
+        if (!from) {
+          throw new Error('No wallet account available for signing');
+        }
+
+        let signature;
+        
+        // Check if this is typed data (EIP-712) or plain message
+        if (event.data.typedData) {
+          console.log('[BRIDGE] eth_signTypedData_v4 for structured data')
+          // Use EIP-712 typed signature for better wallet UX
+          signature = await provider.request({
+            method: 'eth_signTypedData_v4',
+            params: [from, JSON.stringify(event.data.typedData)]
+          });
+        } else {
+          // Fallback to personal_sign for plain messages
+          console.log('[BRIDGE] personal_sign for plain message')
+          signature = await provider.request({
+            method: 'personal_sign',
+            params: [event.data.message, from]
+          });
+        }
+        
+        console.log('[BRIDGE] signature length', signature && signature.length)
 
         // Send response back to content script
         window.postMessage({

@@ -1,12 +1,20 @@
 {
-  "name": "my-v0-project",
+  "name": "HyperChat",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "next build",
+    "build": "node build.js",
+    "build:simple": "rm -rf dist && mkdir -p dist && cp manifest.json background.js popup.html popup.js chat-widget.html chat-widget.js sidepanel.html sidepanel.js wallet-bridge.js content.css content.js supabase.js dist/",
     "dev": "next dev",
     "lint": "next lint",
-    "start": "next start"
+    "start": "next start",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:content": "jest __tests__/content.test.js",
+    "test:background": "jest __tests__/background.test.js",
+    "test:popup": "jest __tests__/popup.test.js",
+    "test:wallet": "jest __tests__/wallet-bridge.test.js",
+    "test:coverage": "jest --coverage"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -48,8 +56,8 @@
     "lucide-react": "^0.454.0",
     "next": "15.2.4",
     "next-themes": "^0.4.4",
-    "react": "^19",
-    "react-dom": "^19",
+    "react": "^18",
+    "react-dom": "^18",
     "react-hook-form": "^7.54.1",
     "react-resizable-panels": "^2.1.7",
     "recharts": "2.15.0",
@@ -62,9 +70,14 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@babel/preset-env": "^7.28.0",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "babel-jest": "^30.0.5",
+    "dotenv": "^16.6.1",
+    "jest": "^30.0.5",
+    "jest-environment-jsdom": "^30.0.5",
     "postcss": "^8.5",
     "tailwindcss": "^3.4.17",
     "typescript": "^5"

@@ -10,7 +10,7 @@ document.addEventListener("DOMContentLoaded", () => {
       <div style="margin-bottom: 16px; font-size: 14px; color: #a0a0a0;">
         Navigate to app.hyperliquid.xyz/trade to start chatting
       </div>
-      <button id="openChat" style="
+      <button id="openSidePanel" style="
         background: #50d2c1;
         color: #0a1f1c;
         border: none;
@@ -19,19 +19,21 @@ document.addEventListener("DOMContentLoaded", () => {
         cursor: pointer;
         font-weight: bold;
       ">
-        Open Chat
+        Open Side Panel
       </button>
     </div>
   `
 
-  document.getElementById("openChat").addEventListener("click", () => {
-    window.chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0].url.includes("app.hyperliquid.xyz/trade")) {
-        window.chrome.tabs.sendMessage(tabs[0].id, { action: "toggleChat" })
+
+  document.getElementById("openSidePanel").addEventListener("click", () => {
+    chrome.sidePanel.open({ windowId: chrome.windows.WINDOW_ID_CURRENT }).then(() => {
+      window.close()
+    }).catch(() => {
+      // If side panel API not available, fallback to setting behavior
+      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).then(() => {
+        alert('Side panel enabled! Click the extension icon to open it.')
         window.close()
-      } else {
-        window.chrome.tabs.create({ url: "https://app.hyperliquid.xyz/trade" })
-      }
+      }).catch(console.error)
     })
   })
 })

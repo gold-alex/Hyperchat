@@ -429,3 +429,33 @@
   background: #1a3d37;
   color: #f6fefb;
 }
+
+/* Element Links Styles */
+.hl-element-link {
+  color: #50d2c1; /* HL green color */
+  text-decoration: underline;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.hl-element-link:hover {
+  color: #7dd3c0;
+}
+
+/* Keyframes for the glow animation */
+@keyframes glow-effect {
+  0%, 100% {
+    box-shadow: 0 0 0px rgba(80, 210, 193, 0);
+  }
+  50% {
+    box-shadow: 0 0 20px 8px rgba(80, 210, 193, 0.7);
+  }
+}
+
+.hl-element-highlight {
+  animation: glow-effect 2s ease-out;
+  border: 2px solid #50d2c1 !important;
+  border-radius: 4px !important;
+  background-color: rgba(80, 210, 193, 0.1) !important;
+  transition: all 0.3s ease !important;
+}
