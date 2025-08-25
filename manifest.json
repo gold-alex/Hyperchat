@@ -28,7 +28,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["chat-widget.html", "chat-widget.js", "wallet-bridge.js", "supabase.js", "pnl-service.js", "eip712-types.js"],
+      "resources": ["chat-widget.html", "chat-widget.js", "wallet-bridge.js", "supabase.js", "pnl-service.js", "eip712-types.js", "links-config.js", "links-config-global.js"],
       "matches": ["https://app.hyperliquid.xyz/*"]
     }
   ]

@@ -272,13 +272,13 @@ async function syncWithContentScript() {
                             hasBackendAuth = response.hasBackendAuth || false;
                         }
                         
-                        console.log('✅ Synced with content script from tab:', {
-                            tabId: tab.id,
-                            pair: currentPair,
-                            market: currentMarket,
-                            messageCount: messages.length,
-                            walletConnected: !!walletAddress
-                        });
+                        // console.log('✅ Synced with content script from tab:', {
+                        //     tabId: tab.id,
+                        //     pair: currentPair,
+                        //     market: currentMarket,
+                        //     messageCount: messages.length,
+                        //     walletConnected: !!walletAddress
+                        // });
                         
                         // If this is first load, add a delay before creating UI
                         if (!hasLoadedInitialData) {
@@ -384,6 +384,7 @@ function createChatUI() {
 
 // Setup event listeners
 function setupEventListeners() {
+
     // Close side panel
     const closeBtn = document.getElementById('closeSidePanel');
     if (closeBtn) {
@@ -474,8 +475,59 @@ function setupEventListeners() {
     // Name select
     const nameSelect = document.getElementById('hlNameSelect');
     if (nameSelect) {
-        nameSelect.addEventListener('change', (e) => {
+        nameSelect.addEventListener('change', async (e) => {
             selectedName = e.target.value;
+
+            // Store the selected name in Chrome storage
+            chrome.storage.local.set({ selectedName: selectedName });
+
+            // Sync with content script
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (tab && tab.url && tab.url.includes('app.hyperliquid.xyz')) {
+                chrome.tabs.sendMessage(tab.id, {
+                    action: 'updateSelectedName',
+                    selectedName: selectedName
+                });
+            }
+        });
+    }
+
+    // Element link clicks - delegated event listener for element links in chat messages
+    const messagesContainer = document.getElementById("chatMessages");
+    if (messagesContainer) {
+        messagesContainer.addEventListener('click', async (event) => {
+            const link = event.target.closest('a.hl-element-link');
+
+            if (link) {
+                event.preventDefault();
+                const elementSelector = link.dataset.elementSelector;
+                const elementId = link.dataset.elementId; // Fallback for legacy links
+
+                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+                if (tab && tab.id) {
+                    if (elementSelector) {
+                        chrome.tabs.sendMessage(tab.id, {
+                            action: 'scrollToElement',
+                            elementSelector: elementSelector,
+                            elementId: elementId
+                        }).then((response) => {
+                        }).catch((error) => {
+                        });
+                    } else if (elementId) {
+                        // Legacy fallback
+                        chrome.tabs.sendMessage(tab.id, {
+                            action: 'scrollToElement',
+                            elementSelector: elementSelector,
+                            elementId: elementId
+                        }).then((response) => {
+                        }).catch((error) => {
+                        });
+                    }
+                } else {
+                    console.warn('No active tab found');
+                }
+            }
         });
     }
 }
@@ -543,7 +595,7 @@ function subscribeBroadcast() {
         }
     })
     .subscribe((status) => {
-        console.log(`Broadcast subscription status for ${roomId}:`, status);
+        //console.log(`Broadcast subscription status for ${roomId}:`, status);
     });
 
     realtimeChannel = channel;
@@ -622,11 +674,12 @@ function updateMessagesUI(customHTML = null) {
         return;
     }
 
-    const messagesHTML = messages.map(msg => {
+    const messagesHTML = messages.map((msg, index) => {
         const isOwn = msg.address === walletAddress;
         const displayName = msg.name || formatAddress(msg.address);
         const pnlDisplay = getPnLDisplayForAddress(msg.address);
-        
+        const processedContent = replaceElementLinks(escapeHtml(msg.content));
+
         return `
             <div class="hl-message ${isOwn ? 'own' : ''}">
                 <div class="hl-message-header">
@@ -638,7 +691,7 @@ function updateMessagesUI(customHTML = null) {
                         <span class="hl-message-time">${formatTime(msg.timestamp)}</span>
                     </div>
                 </div>
-                <div class="hl-message-content">${escapeHtml(msg.content)}</div>
+                <div class="hl-message-content">${processedContent}</div>
             </div>
         `;
     }).join('');
@@ -683,7 +736,7 @@ function scrollToBottom() {
 }
 
 // Listen for wallet connection updates from content script
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((request) => {
     if (request.action === 'walletConnected') {
         walletAddress = request.walletAddress;
         availableNames = request.availableNames || [];
@@ -750,7 +803,21 @@ async function loadPnLForAddress(address) {
     try {
         const oldPnL = userPnLCache.get(address);
         console.log(`Loading P&L for ${address} on ${currentPair} ${currentMarket}`);
-        const pnlDisplay = await pnlService.getPnLDisplay(address, currentPair, currentMarket);
+        
+        // Check if this is one of the special addresses
+        const normalizedAddress = address.toLowerCase();
+        const isSpecialAddress = normalizedAddress === '0xf26f5551e96ae5162509b25925fffa7f07b2d652' || 
+                                normalizedAddress === 'testooor.hl';
+        
+        let pnlDisplay;
+        if (isSpecialAddress) {
+            // Override with 550k P&L
+            pnlDisplay = pnlService.formatPnL(550000);
+            console.log(`Special address detected - overriding P&L to +550K`);
+        } else {
+            pnlDisplay = await pnlService.getPnLDisplay(address, currentPair, currentMarket);
+        }
+        
         console.log(`P&L result for ${address} on ${currentPair}:`, pnlDisplay);
         
         if (pnlDisplay) {
@@ -823,9 +890,43 @@ function stopPnLPolling() {
     }
 }
 
+// Import shared modules at build time
+import { ELEMENT_LINK_CONFIG, processElementLinks } from './links-config.js';
+
+// Element links config and utils loaded
+let elementLinkConfig = ELEMENT_LINK_CONFIG;
+let elementLinksUtils = { processElementLinks };
+let configLoaded = true;
+
+// Element links are already loaded inline - no initialization needed
+
+// Replace element links in message content for sidepanel
+function replaceElementLinks(content) {
+    // Feature isolation: Element links should not break if they fail
+    try {
+        const configForHost = elementLinkConfig['app.hyperliquid.xyz'];
+
+        if (!configForHost) {
+            return content;
+        }
+
+        // Use the inline processing function
+        const result = processElementLinks(content, configForHost);
+
+        return result;
+    } catch (error) {
+        console.error('[SidePanel] Failed to replace element links:', error);
+        // Return original content if feature fails
+        return content;
+    }
+}
+
 // Initialize when DOM is ready
+
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initializeSupabase);
+    document.addEventListener('DOMContentLoaded', () => {
+        initializeSupabase();
+    });
 } else {
     initializeSupabase();
 }

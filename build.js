@@ -20,7 +20,13 @@ const sourceFiles = [
   'content.js',
   'supabase.js',
   'pnl-service.js',
-  'eip712-types.js'
+  'eip712-types.js',
+  'links-config.js',
+  'links-config-global.js',
+  'icon-16.png',
+  'icon-32.png',
+  'icon-48.png',
+  'icon-128.png'
 ];
 
 // Environment variables to substitute

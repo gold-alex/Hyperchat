@@ -5,20 +5,18 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY
 const BACKEND_PORT = process.env.BACKEND_PORT || 3002
 
+// Load shared modules (will be available via global window.ElementLinks after injection)
+
 let supabase;
 let chatInstance;
 
 // Initialize Supabase and then start the chat
 function initializeSupabase() {
-    console.log('Importing Supabase library via dynamic import...');
-
     // Use dynamic import so that the library executes in the same
     // (isolated) world as the content-script. This avoids page-level CSP
     // issues and also lets us access the exported symbols directly.
     import(chrome.runtime.getURL('supabase.js'))
         .then((supabaseModule) => {
-            console.log('✅ Supabase module imported');
-
             // "supabase.js" is distributed as a UMD bundle. Depending on how
             // the loader evaluates, `createClient` can live in different
             // places. We try the common fall-backs below.
@@ -27,26 +25,20 @@ function initializeSupabase() {
             if (supabaseModule?.supabase?.createClient) {
                 // ESM import returned the namespace with `supabase` property.
                 createClient = supabaseModule.supabase.createClient;
-                console.log('Found createClient on supabaseModule.supabase');
             } else if (supabaseModule?.createClient) {
                 // ESM import directly returned the exports object.
                 createClient = supabaseModule.createClient;
-                console.log('Found createClient on supabaseModule');
             } else if (typeof window !== 'undefined' && window.supabase?.createClient) {
                 // UMD bundle attached `supabase` to the global object.
                 createClient = window.supabase.createClient;
-                console.log('Found createClient on window.supabase');
             }
 
             if (createClient) {
                 supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-                console.log('✅ Supabase client created successfully');
-            } else {
-                console.error('❌ Could not locate createClient after importing Supabase');
             }
         })
         .catch((error) => {
-            console.error('❌ Failed to import Supabase library:', error);
+            console.error('Failed to import Supabase library:', error);
         })
         .finally(() => {
             // Proceed with chat initialisation regardless, so the extension
@@ -78,12 +70,23 @@ class HyperliquidChat {
     this.autoScroll = true
     // Inject a bridge script into the page to access window.ethereum in the page context
     this.injectWalletBridge()
+    // Inject element links configuration
+    this.injectElementLinks()
     // Don't call init() here - it will be called by initializeChat()
   }
 
-  async init() {
-    console.log("Initializing HyperliquidChat...")
+  // Inject element links configuration into the page context
+  injectElementLinks() {
+    const url = chrome.runtime.getURL('links-config-global.js');
+    const script = document.createElement('script');
+    script.src = url;
+    script.type = 'text/javascript';
+    script.async = false;
+    (document.head || document.documentElement).appendChild(script);
+    // Don't remove script - it needs to stay to provide global variables
+  }
 
+  async init() {
     // First detect market info
     this.detectMarketInfo()
     // Don't create floating widget - only sidepanel is supported
@@ -131,23 +134,19 @@ class HyperliquidChat {
 
     // Try desktop selector first
     pairElement = document.querySelector("#coinInfo > div > div:nth-child(2) > div:nth-child(1) > div > div > div > div:nth-child(2) > div")
-    console.log("Desktop selector result:", pairElement)
 
     // Try mobile selector if desktop fails
     if (!pairElement || !pairElement.textContent.trim()) {
       console.log("Desktop selector failed, trying mobile...")
       pairElement = document.querySelector("#root > div:nth-child(2) > div:nth-child(3) > div > div:nth-child(1) > div:nth-child(1) > div > div:nth-child(1) > div > div > div > div:nth-child(2) > div")
-      console.log("Mobile selector result:", pairElement)
     }
 
     // Try icon-based detection as fallback
     if (!pairElement || !pairElement.textContent.trim()) {
-      console.log("XPath selectors failed, trying icon-based detection...")
       
       // Look for coin icon and get text after it
       const coinIcon = document.querySelector('img[alt][src*="/coins/"]');
       if (coinIcon) {
-        console.log(`Found coin icon with alt: "${coinIcon.alt}"`)
         
         // Navigate up to find container with market text
         let container = coinIcon.closest('div[style*="display"]');
@@ -159,7 +158,6 @@ class HyperliquidChat {
             // Look for pattern like "HYPE-USD" or contains USD
             if (text && !text.includes('Welcome') && (text.includes('-USD') || text.match(/^[A-Z]+-USD[C]?$/))) {
               pairElement = el;
-              console.log(`Found pair via icon navigation: "${text}"`)
               break;
             }
           }
@@ -169,16 +167,13 @@ class HyperliquidChat {
 
     // Additional fallback selectors
     if (!pairElement || !pairElement.textContent.trim()) {
-      console.log("All primary methods failed, trying generic fallbacks...")
       pairElement = document.querySelector(".sc-bjfHbI.bFBYgR") ||
                    document.querySelector("[data-testid='trading-pair']") || 
                    document.querySelector(".trading-pair")
-      console.log("Fallback pair element:", pairElement)
     }
 
     if (pairElement) {
       newPair = pairElement.textContent.trim()
-      console.log(`Raw pair text: "${newPair}"`)
       
       // Clean up text - remove any "Welcome to Hyperliquid" contamination
       if (newPair.includes("Welcome")) {
@@ -186,7 +181,6 @@ class HyperliquidChat {
         const match = newPair.match(/([A-Z]+[-]USD[C]?)/);
         if (match) {
           newPair = match[1];
-          console.log(`Extracted pair from contaminated text: "${newPair}"`)
         }
       }
 
@@ -202,9 +196,7 @@ class HyperliquidChat {
     const spotElement = document.querySelector(
       'div[style*="background: rgb(7, 39, 35)"] .sc-bjfHbI.jxtURp.body12Regular',
     )
-    console.log("Spot detection element:", spotElement)
     const newMarket = spotElement && spotElement.textContent.includes("Spot") ? "Spot" : "Perps"
-    console.log(`Detected market type: "${newMarket}"`)
 
     if (newMarket !== this.currentMarket) {
       console.log(`Market type changed: "${this.currentMarket}" -> "${newMarket}"`)
@@ -217,10 +209,10 @@ class HyperliquidChat {
     // Fallback if no pair detected
     if (!this.currentPair) {
       this.currentPair = "UNKNOWN"
-      console.warn("❌ Could not detect trading pair, using UNKNOWN")
+      console.warn("Could not detect trading pair, using UNKNOWN")
     }
 
-    console.log(`✅ Final market info - Pair: "${this.currentPair}", Market: "${this.currentMarket}", Room: "${roomId}"`)
+    console.log(`Final market info - Pair: "${this.currentPair}", Market: "${this.currentMarket}", Room: "${roomId}"`)
   }
 
   createChatWidget() {
@@ -231,7 +223,7 @@ class HyperliquidChat {
   // Removed floating chat UI methods - only sidepanel is supported
 
   renderMessages() {
-    console.log(`Rendering ${this.messages.length} messages`)
+    //console.log(`Rendering ${this.messages.length} messages`)
 
     if (this.messages.length === 0) {
       console.log("No messages to render")
@@ -240,7 +232,7 @@ class HyperliquidChat {
 
     const rendered = this.messages
       .map((msg, index) => {
-        console.log(`Rendering message ${index + 1}:`, { content: msg.content, address: msg.address })
+        //console.log(`Rendering message ${index + 1}:`, { content: msg.content, address: msg.address })
 
         const isOwn = msg.address === this.walletAddress
         const displayName = msg.name ? msg.name : this.formatAddress(msg.address)
@@ -250,14 +242,13 @@ class HyperliquidChat {
           <span class="hl-message-address">${displayName}</span>
           <span class="hl-message-time">${this.formatTime(msg.timestamp)}</span>
         </div>
-        <div class="hl-message-content">${this.escapeHtml(msg.content)}</div>
+        <div class="hl-message-content">${this.replaceElementLinks(this.escapeHtml(msg.content))}</div>
       </div>
     `
         return messageHTML
       })
       .join("")
 
-    console.log(`✅ Rendered HTML for ${this.messages.length} messages (${rendered.length} chars)`)
     return rendered
   }
 
@@ -525,33 +516,28 @@ class HyperliquidChat {
 
     // Make sure we have a valid room ID
     if (!this.currentPair || this.currentPair === "UNKNOWN") {
-      console.warn("❌ Cannot load chat history - trading pair not detected yet")
+      console.warn("Cannot load chat history - trading pair not detected yet")
       return
     }
 
     // Check if Supabase is initialized
     if (!this.supabase) {
-      console.error("❌ Supabase client not initialized!")
+      console.error("Supabase client not initialized!")
       return
     }
 
-    console.log("✅ Supabase client is initialized")
-
     try {
-      console.log(`Querying Supabase for room: "${roomId}"`)
-      console.log(`Query: SELECT * FROM messages WHERE room = '${roomId}' ORDER BY timestamp ASC`)
-
       const { data, error } = await this.supabase
         .from('messages')
         .select('*')
         .eq('room', roomId)
         .order('timestamp', { ascending: true })
 
-      console.log('Supabase response:', { data, error })
+      //console.log('Supabase response:', { data, error })
 
       if (error) {
-        console.error('❌ Supabase load error:', error)
-        console.error('❌ Error details:', {
+        console.error('Supabase load error:', error)
+        console.error('Error details:', {
           message: error.message,
           details: error.details,
           hint: error.hint,
@@ -566,24 +552,22 @@ class HyperliquidChat {
         throw error // Re-throw to be caught by caller
       }
 
-      console.log(`✅ Query successful! Found ${data ? data.length : 0} messages for room "${roomId}"`)
+      console.log(`Query successful! Found ${data ? data.length : 0} messages for room "${roomId}"`)
 
       if (data && data.length > 0) {
         console.log('First message sample:', data[0])
         console.log('All message contents:', data.map(m => ({ content: m.content, timestamp: m.timestamp })))
       } else {
-        console.log('ℹ️ No messages found for this room')
+        console.log('No messages found for this room')
       }
 
       // Always set messages (even if empty array)
       this.messages = data || []
-      console.log(`✅ Set this.messages to array with ${this.messages.length} items`)
 
       // Don't update UI - floating chat is removed, only sidepanel handles UI
-      console.log('✅ Chat history loaded, sidepanel will handle UI rendering')
 
     } catch (err) {
-      console.error('❌ Failed to load chat history:', err)
+      console.error('Failed to load chat history:', err)
       throw err // Re-throw to be handled by caller
     }
   }
@@ -928,18 +912,147 @@ class HyperliquidChat {
         }
       } else if (request.action === 'syncMessages') {
         // Sync messages with side panel
-        sendResponse({ 
+        sendResponse({
           messages: this.messages,
           currentPair: this.currentPair,
           currentMarket: this.currentMarket
         })
         return true
+      } else if (request.action === 'scrollToElement') {
+        // Handle element scrolling request from side panel
+        const { elementSelector, elementId } = request;
+
+        if (!elementSelector && !elementId) {
+          return;
+        }
+
+        const selectorToUse = elementSelector || elementId;
+
+        this.scrollToElement(selectorToUse);
       }
     })
   }
 
   formatAddress(address) {
     return `${address.slice(0, 6)}...${address.slice(-4)}`
+  }
+
+  // Find element by text content for :contains() selectors
+  findElementByText(selector) {
+    try {
+      // Parse selector like "div:contains('Open Interest')" or "div:contains('Funding Rate')"
+      const containsMatch = selector.match(/^(.+?):contains\(['"](.+?)['"]\)$/);
+      if (!containsMatch) {
+        console.warn(`Invalid :contains() selector format: ${selector}`);
+        return null;
+      }
+
+      const baseSelector = containsMatch[1]; // e.g., "div"
+      const searchText = containsMatch[2];   // e.g., "Open Interest"
+
+      console.log(`Searching for ${baseSelector} elements containing: "${searchText}"`);
+
+      // Find all elements matching the base selector
+      const candidates = document.querySelectorAll(baseSelector);
+      console.log(`Found ${candidates.length} candidate elements with selector: ${baseSelector}`);
+
+      // Find the one that contains the search text
+      for (const candidate of candidates) {
+        const textContent = candidate.textContent || '';
+        if (textContent.toLowerCase().includes(searchText.toLowerCase())) {
+          console.log(`Found element containing "${searchText}":`, candidate);
+          return candidate;
+        }
+      }
+
+      console.warn(`No ${baseSelector} element found containing: "${searchText}"`);
+      return null;
+    } catch (error) {
+      console.error('Error in findElementByText:', error);
+      return null;
+    }
+  }
+
+  // Scroll to a specific element on the page
+  scrollToElement(selector) {
+    let element;
+
+    if (selector.startsWith('#')) {
+      // Handle ID selectors
+      const elementId = selector.substring(1);
+      console.log(`🔍 Searching for element with ID: ${elementId}`);
+      element = document.getElementById(elementId);
+      if (!element) {
+        console.warn(`Element with ID '${elementId}' not found. Available IDs:`,
+          Array.from(document.querySelectorAll('[id]')).map(el => el.id).filter(id => id.toLowerCase().includes('info') || id.toLowerCase().includes('coin')));
+      }
+    } else {
+      // Handle complex selectors - try standard querySelector first
+      try {
+        element = document.querySelector(selector);
+      } catch (queryError) {
+        element = null;
+      }
+
+      // If standard selector fails, check for :contains() pseudo-selector
+      if (!element && selector.includes(':contains(')) {
+
+        // Parse selector like "div:contains('Open Interest')"
+        const containsMatch = selector.match(/^(.+?):contains\(['"](.+?)['"]\)$/);
+        if (containsMatch) {
+          const baseSelector = containsMatch[1]; // e.g., "div"
+          const searchText = containsMatch[2];   // e.g., "Open Interest"
+
+          try {
+            // Find all elements matching the base selector
+            const candidates = document.querySelectorAll(baseSelector);
+
+            // Find the one that contains the search text (prefer smaller, more specific elements)
+            let bestCandidate = null;
+            let smallestSize = Infinity;
+
+            for (const candidate of candidates) {
+              const textContent = candidate.textContent || '';
+              if (textContent.toLowerCase().includes(searchText.toLowerCase())) {
+                // Calculate element "size" (width * height) to prefer smaller, more specific elements
+                const rect = candidate.getBoundingClientRect();
+                const size = rect.width * rect.height;
+
+                // Prefer elements that are visible and not too large
+                if (size > 0 && size < smallestSize && size < 100000) { // Avoid very large elements
+                  smallestSize = size;
+                  bestCandidate = candidate;
+                  console.log(`Found candidate containing "${searchText}" (size: ${size}):`, candidate);
+                }
+              }
+            }
+
+            if (bestCandidate) {
+              element = bestCandidate;
+              console.log(`Selected best element containing "${searchText}":`, element);
+            }
+
+            if (!element) {
+              console.warn(`No ${baseSelector} element found containing: "${searchText}"`);
+            }
+          } catch (containsError) {
+            console.error(`Error searching for :contains() selector:`, containsError);
+          }
+        } else {
+          console.warn(`Invalid :contains() selector format: ${selector}`);
+        }
+      }
+    }
+
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Add temporary highlight effect
+      element.classList.add('hl-element-highlight');
+      setTimeout(() => {
+        element.classList.remove('hl-element-highlight');
+      }, 2000);
+    } else {
+    }
   }
 
   formatTime(timestamp) {
@@ -1017,6 +1130,30 @@ class HyperliquidChat {
     } catch (err) {
       console.error("Error fetching HL names", err)
       return []
+    }
+  }
+
+  // Replace element links in message content
+  _replaceElementLinks(content) {
+    // Feature isolation: Element links should not break if they fail
+    try {
+      // Check if ElementLinks is available globally
+      if (!window.ElementLinks) {
+        return content;
+      }
+
+      const { ELEMENT_LINK_CONFIG, processElementLinks } = window.ElementLinks;
+      const configForHost = ELEMENT_LINK_CONFIG[window.location.hostname];
+      if (!configForHost) {
+        return content;
+      }
+
+      // Use the shared utility function
+      return processElementLinks(content, configForHost);
+    } catch (error) {
+      console.error('[ElementLinks] Failed to replace element links:', error);
+      // Return original content if feature fails
+      return content;
     }
   }
 }
