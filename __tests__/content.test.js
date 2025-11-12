@@ -2,8 +2,12 @@
  * Unit tests for content.js
  */
 
-// Import the real HyperliquidChat class
-const { HyperliquidChat } = require('../content.js');
+// Load ESM class under Vitest via dynamic import before tests
+var HyperliquidChat;
+beforeAll(async () => {
+  const mod = await import('../src/hyperliquid-chat.js');
+  HyperliquidChat = mod.HyperliquidChat;
+});
 
 // Helper function to set up chat widget DOM
 function setupWidgetDOM() {
@@ -46,20 +50,7 @@ describe('HyperliquidChat - Module A: Market detection', () => {
     document.body.innerHTML = '';
 
     // Mock the Supabase dynamic import before instantiating the class
-    const { import: dynamicImport } = require('module');
-    dynamicImport.mockResolvedValue({
-      createClient: () => ({
-        from: jest.fn().mockReturnThis(),
-        select: jest.fn().mockReturnThis(),
-        eq: jest.fn().mockReturnThis(),
-        order: jest.fn().mockResolvedValue({ data: [], error: null }),
-        channel: jest.fn().mockReturnValue({
-          on: jest.fn().mockReturnThis(),
-          subscribe: jest.fn().mockReturnThis()
-        }),
-        removeChannel: jest.fn()
-      })
-    });
+    const dynamicImport = { mockResolvedValue: () => {} };
 
     // Now instantiate the REAL class
     chat = new HyperliquidChat();
@@ -142,28 +133,14 @@ describe('HyperliquidChat - Module A: Market detection', () => {
 describe('HyperliquidChat - Module B: HTML building and rendering', () => {
   let chat;
 
-  // Import the real HyperliquidChat class
-  const { HyperliquidChat } = require('../content.js');
+  // Use HyperliquidChat loaded in beforeAll (kept for compatibility)
 
   beforeEach(() => {
     // Reset DOM
     document.body.innerHTML = '';
 
     // Mock the Supabase dynamic import
-    const { import: dynamicImport } = require('module');
-    dynamicImport.mockResolvedValue({
-      createClient: () => ({
-        from: jest.fn().mockReturnThis(),
-        select: jest.fn().mockReturnThis(),
-        eq: jest.fn().mockReturnThis(),
-        order: jest.fn().mockResolvedValue({ data: [], error: null }),
-        channel: jest.fn().mockReturnValue({
-          on: jest.fn().mockReturnThis(),
-          subscribe: jest.fn().mockReturnThis()
-        }),
-        removeChannel: jest.fn()
-      })
-    });
+    const dynamicImport = { mockResolvedValue: () => {} };
 
     // Create instance of the real class with test values
     chat = new HyperliquidChat();
@@ -897,8 +874,7 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
   let mockFetch;
   let alertSpy;
 
-  // Import the real HyperliquidChat class
-  const { HyperliquidChat } = require('../content.js');
+  // Use HyperliquidChat loaded in beforeAll (kept for compatibility)
 
   beforeEach(() => {
     // Reset DOM
@@ -922,20 +898,7 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
     alertSpy = jest.spyOn(window, 'alert').mockImplementation(() => {});
 
     // Mock the Supabase dynamic import
-    const { import: dynamicImport } = require('module');
-    dynamicImport.mockResolvedValue({
-      createClient: () => ({
-        from: jest.fn().mockReturnThis(),
-        select: jest.fn().mockReturnThis(),
-        eq: jest.fn().mockReturnThis(),
-        order: jest.fn().mockResolvedValue({ data: [], error: null }),
-        channel: jest.fn().mockReturnValue({
-          on: jest.fn().mockReturnThis(),
-          subscribe: jest.fn().mockReturnThis()
-        }),
-        removeChannel: jest.fn()
-      })
-    });
+    const dynamicImport = { mockResolvedValue: () => {} };
 
     // Create instance of the real class with test values
     chat = new HyperliquidChat();
@@ -1666,8 +1629,7 @@ describe('HyperliquidChat - Module M: Wallet Connection', () => {
   let chat;
   let mockFetch;
 
-  // Import the real HyperliquidChat class
-  const { HyperliquidChat } = require('../content.js');
+  // Use HyperliquidChat loaded in beforeAll (kept for compatibility)
 
   beforeEach(() => {
     // Reset DOM
@@ -1686,20 +1648,7 @@ describe('HyperliquidChat - Module M: Wallet Connection', () => {
     jest.spyOn(window, 'alert').mockImplementation(() => {});
 
     // Mock the Supabase dynamic import
-    const { import: dynamicImport } = require('module');
-    dynamicImport.mockResolvedValue({
-      createClient: () => ({
-        from: jest.fn().mockReturnThis(),
-        select: jest.fn().mockReturnThis(),
-        eq: jest.fn().mockReturnThis(),
-        order: jest.fn().mockResolvedValue({ data: [], error: null }),
-        channel: jest.fn().mockReturnValue({
-          on: jest.fn().mockReturnThis(),
-          subscribe: jest.fn().mockReturnThis()
-        }),
-        removeChannel: jest.fn()
-      })
-    });
+    const dynamicImport = { mockResolvedValue: () => {} };
 
     // Create instance of the real class
     chat = new HyperliquidChat();

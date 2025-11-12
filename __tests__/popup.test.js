@@ -1,5 +1,8 @@
 // Tests for popup.js
 
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { initPopup } from '../src/popup';
+
 describe('Popup Script', () => {
   // Setup DOM before tests
   beforeEach(() => {
@@ -9,23 +12,22 @@ describe('Popup Script', () => {
     `;
 
     // Mock chrome.tabs API
-    chrome.tabs.query = jest.fn();
-    chrome.tabs.sendMessage = jest.fn();
-    chrome.tabs.create = jest.fn();
+    chrome.tabs.query = vi.fn();
+    chrome.tabs.sendMessage = vi.fn();
+    chrome.tabs.create = vi.fn();
 
     // Mock window.close
-    window.close = jest.fn();
+    window.close = vi.fn();
   });
 
   // Clean up after each test
   afterEach(() => {
     document.body.innerHTML = '';
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
-  test('should render UI with header text and "Open Chat" button on DOMContentLoaded', () => {
-    // Load popup script
-    require('../popup.js');
+  test('should render UI with header text and "Open Chat" button on DOMContentLoaded', async () => {
+    initPopup();
 
     // Simulate DOMContentLoaded event
     const event = new Event('DOMContentLoaded');
@@ -47,9 +49,8 @@ describe('Popup Script', () => {
     expect(openChatButton.textContent.trim()).toBe('Open Chat');
   });
 
-  test('clicking "Open Chat" when on trade page should send toggleChat message and close window', () => {
-    // Load popup script
-    require('../popup.js');
+  test('clicking "Open Chat" when on trade page should send toggleChat message and close window', async () => {
+    initPopup();
 
     // Simulate DOMContentLoaded event
     const event = new Event('DOMContentLoaded');
@@ -74,9 +75,8 @@ describe('Popup Script', () => {
     expect(chrome.tabs.create).not.toHaveBeenCalled();
   });
 
-  test('clicking "Open Chat" when not on trade page should create new tab with trade URL', () => {
-    // Load popup script
-    require('../popup.js');
+  test('clicking "Open Chat" when not on trade page should create new tab with trade URL', async () => {
+    initPopup();
 
     // Simulate DOMContentLoaded event
     const event = new Event('DOMContentLoaded');

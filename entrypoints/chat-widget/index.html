@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Hyperliquid Chat</title>
+    <link rel="stylesheet" href="/content.css" />
+    <style>body{margin:0;background:#0a1f1c;}</style>
+  </head>
+  <body>
+    <script type="module">
+      const params = new URLSearchParams(location.search);
+      window.CHAT_PAIR_OVERRIDE = params.get('pair');
+      window.CHAT_MARKET_OVERRIDE = params.get('market');
+      window.IS_STANDALONE_CHAT = true;
+      import(chrome.runtime.getURL('content-scripts/content.js')).catch(console.error);
+    </script>
+  </body>
+  </html>
+
