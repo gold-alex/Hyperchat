@@ -49,16 +49,16 @@ describe('HyperliquidChat - Module A: Market detection', () => {
     // Reset DOM
     document.body.innerHTML = '';
 
-    // Mock the Supabase dynamic import before instantiating the class
+    // Mock Supabase dynamic import before instantiation
     const dynamicImport = { mockResolvedValue: () => {} };
 
-    // Now instantiate the REAL class
+    // Instantiate main class
     chat = new HyperliquidChat();
   });
 
-  test('A1: Primary selector present - should detect pair and set market to Perps', () => {
-    // Skip this test for now and use fallback selector test instead
-    // This test requires more complex DOM structure matching
+  test('A1: Primary selector present - should detect pair & set market to Perps', () => {
+    // Skip for now use fallback selector test instead
+    // @todo more complex DOM structure matching
     expect(true).toBe(true);
   });
 
@@ -69,7 +69,7 @@ describe('HyperliquidChat - Module A: Market detection', () => {
     fallbackElement.textContent = 'BTC-USDC';
     document.body.appendChild(fallbackElement);
 
-    // Run detection with the real class instance
+    // Run detection with real (non-mocked) class instance
     chat.detectMarketInfo();
 
     // Assert
@@ -90,7 +90,7 @@ describe('HyperliquidChat - Module A: Market detection', () => {
     // Create pair element
     const pairElement = document.createElement('div');
     pairElement.className = 'trading-pair';
-    pairElement.textContent = 'SOL-USDC';
+    pairElement.textContent = 'HYPE-USDC';
     document.body.appendChild(pairElement);
 
     // Create spot element
@@ -108,7 +108,7 @@ describe('HyperliquidChat - Module A: Market detection', () => {
     chat.detectMarketInfo();
 
     // Assert
-    expect(chat.currentPair).toBe('SOL-USDC');
+    expect(chat.currentPair).toBe('HYPE-USDC');
     expect(chat.currentMarket).toBe('Spot');
   });
 
@@ -130,7 +130,7 @@ describe('HyperliquidChat - Module A: Market detection', () => {
   });
 });
 
-describe('HyperliquidChat - Module B: HTML building and rendering', () => {
+describe('HyperliquidChat - Module B: HTML building & rendering', () => {
   let chat;
 
   // Use HyperliquidChat loaded in beforeAll (kept for compatibility)
@@ -198,12 +198,12 @@ describe('HyperliquidChat - Module B: HTML building and rendering', () => {
     chat.messages = [
       {
         address: '0x1234567890abcdef1234567890abcdef12345678', // Own message
-        content: 'Hello from me',
+        content: 'sup',
         timestamp: 1625097600000
       },
       {
         address: '0xabcdef1234567890abcdef1234567890abcdef12', // Other message
-        content: 'Hello from someone else',
+        content: 'gm big dawg',
         timestamp: 1625097600000
       }
     ];
@@ -611,8 +611,8 @@ describe('HyperliquidChat - Module F: History loading with retry', () => {
 
     // Mock successful results
     const mockMessages = [
-      { id: 1, content: 'Hello', address: '0x123', timestamp: 1625097600000 },
-      { id: 2, content: 'World', address: '0x456', timestamp: 1625097600001 }
+      { id: 1, content: 'sup', address: '0x123', timestamp: 1625097600000 },
+      { id: 2, content: 'gm big dawg', address: '0x456', timestamp: 1625097600001 }
     ];
     mockSupabase.order.mockResolvedValueOnce({ data: mockMessages, error: null });
 
@@ -775,7 +775,7 @@ describe('HyperliquidChat - Module G: Realtime subscription', () => {
     const incomingMessage = {
       payload: {
         address: '0xabcdef1234567890abcdef1234567890abcdef12', // Different address
-        content: 'Hello from someone else',
+        content: 'gm big dawg',
         timestamp: 1625097600000,
         room: 'ETH-USDC_Perps' // Same room
       }
@@ -809,7 +809,7 @@ describe('HyperliquidChat - Module G: Realtime subscription', () => {
     const incomingMessage = {
       payload: {
         address: '0x1234567890abcdef1234567890abcdef12345678', // Same as wallet address
-        content: 'Hello from me',
+        content: 'gm',
         timestamp: 1625097600000,
         room: 'ETH-USDC_Perps' // Same room
       }
@@ -839,7 +839,7 @@ describe('HyperliquidChat - Module G: Realtime subscription', () => {
     const incomingMessage = {
       payload: {
         address: '0xabcdef1234567890abcdef1234567890abcdef12', // Different address
-        content: 'Hello from different room',
+        content: 'gm from different room',
         timestamp: 1625097600000,
         room: 'BTC-USDC_Perps' // Different room
       }
@@ -871,54 +871,40 @@ describe('HyperliquidChat - Module G: Realtime subscription', () => {
 
 describe('HyperliquidChat - Module H: Sending messages', () => {
   let chat;
-  let mockFetch;
   let alertSpy;
-
-  // Use HyperliquidChat loaded in beforeAll (kept for compatibility)
+  let mockWakuClient;
 
   beforeEach(() => {
-    // Reset DOM
     document.body.innerHTML = '';
-
-    // Create messages container and input field
     const messagesContainer = document.createElement('div');
     messagesContainer.id = 'chatMessages';
     document.body.appendChild(messagesContainer);
 
     const messageInput = document.createElement('input');
     messageInput.id = 'messageInput';
-    messageInput.value = '';
     document.body.appendChild(messageInput);
 
-    // Mock fetch
-    mockFetch = jest.fn();
-    global.fetch = mockFetch;
-
-    // Mock alert
     alertSpy = jest.spyOn(window, 'alert').mockImplementation(() => {});
 
-    // Mock the Supabase dynamic import
-    const dynamicImport = { mockResolvedValue: () => {} };
-
-    // Create instance of the real class with test values
     chat = new HyperliquidChat();
     chat.currentPair = 'ETH-USDC';
     chat.currentMarket = 'Perps';
     chat.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
     chat.selectedName = '';
     chat.messages = [];
-    chat.jwtToken = 'mock-jwt-token';
-    chat.realtimeChannel = {
-          send: jest.fn()
-        };
-
-    // Mock signMessage to avoid actual wallet interaction
-    chat.signMessage = jest.fn().mockImplementation(async (message) => {
-        return 'mock-signature-' + message.substring(0, 10);
-    });
-
-    // Mock renderMessages for simpler testing
-    chat.renderMessages = jest.fn().mockReturnValue(`<div class="rendered-messages">${chat.messages.length} messages</div>`);
+    chat.renderMessages = jest.fn().mockReturnValue('<div>rendered</div>');
+    chat.signMessage = jest.fn().mockResolvedValue('mock-signature');
+    mockWakuClient = {
+      setRoom: jest.fn(),
+      setWalletInfo: jest.fn(),
+      sendMessage: jest.fn().mockResolvedValue({
+        address: chat.walletAddress,
+        content: 'gm, sers',
+        timestamp: 111,
+        name: '',
+      }),
+    };
+    chat.wakuClient = mockWakuClient;
   });
 
   afterEach(() => {
@@ -926,248 +912,81 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
   });
 
   test('H1: Guards - empty input should not send message', async () => {
-    // Set empty input
     const input = document.getElementById('messageInput');
     input.value = '';
 
-    // Call sendMessage
     await chat.sendMessage();
 
-    // Assert
     expect(chat.signMessage).not.toHaveBeenCalled();
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockWakuClient.sendMessage).not.toHaveBeenCalled();
   });
 
-  test('H2: Guards - missing JWT token should show alert', async () => {
-    // Set JWT token to null
-    chat.jwtToken = null;
-
-    // Set input value
+  test('H2: Guards - missing wallet should prompt reconnection', async () => {
+    chat.walletAddress = '';
     const input = document.getElementById('messageInput');
-    input.value = 'Hello world';
+    input.value = 'gm, sers';
 
-    // Call sendMessage
     await chat.sendMessage();
 
-    // Assert
-    expect(alertSpy).toHaveBeenCalledWith('Please reconnect your wallet to send messages');
-    expect(chat.signMessage).not.toHaveBeenCalled();
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalledWith('Connect wallet first.');
+    expect(mockWakuClient.sendMessage).not.toHaveBeenCalled();
   });
 
-  test('H3: Successful path - should sign, send, and broadcast message', async () => {
-    // Create spy for scrollToBottom
-    const scrollToBottomSpy = jest.spyOn(chat, 'scrollToBottom');
-
-    // Mock successful fetch response
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ success: true })
-    });
-
-    // Set input value
+  test('H3: Guards - missing Waku client shows initialization alert', async () => {
+    chat.wakuClient = null;
     const input = document.getElementById('messageInput');
-    input.value = 'Hello world';
+    input.value = 'gm, sers';
 
-    // Call sendMessage
     await chat.sendMessage();
 
-    // Assert
+    expect(alertSpy).toHaveBeenCalledWith('Waku client not yet initialized.');
+    expect(chat.signMessage).not.toHaveBeenCalled();
+  });
+
+  test('H4: Successful path - should sign and send message via Waku', async () => {
+    const scrollSpy = jest.spyOn(chat, 'scrollToBottom');
+    const input = document.getElementById('messageInput');
+    input.value = 'gm, sers';
+
+    await chat.sendMessage();
+
+    expect(mockWakuClient.setWalletInfo).toHaveBeenCalledWith(chat.walletAddress, '');
     expect(chat.signMessage).toHaveBeenCalled();
-    expect(mockFetch).toHaveBeenCalledWith(
-      'http://localhost:3001/message',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({
-          'Authorization': 'Bearer mock-jwt-token'
-        })
-      })
-    );
-
-    // Check optimistic UI update
+    expect(mockWakuClient.sendMessage).toHaveBeenCalledWith('gm, sers', 'mock-signature');
     expect(chat.messages.length).toBe(1);
-    expect(chat.messages[0].content).toBe('Hello world');
-    expect(input.value).toBe(''); // Input should be cleared
-    expect(scrollToBottomSpy).toHaveBeenCalled();
-
-    // Check broadcast
-    expect(chat.realtimeChannel.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'broadcast',
-        event: 'new-message',
-        payload: expect.objectContaining({
-          content: 'Hello world'
-        })
-      })
-    );
+    expect(chat.messages[0].content).toBe('gm, sers');
+    expect(input.value).toBe('');
+    expect(scrollSpy).toHaveBeenCalled();
   });
 
-  test('H4: Error path - rate limit should show specific alert', async () => {
-    // Create spy for scrollToBottom
-    const scrollToBottomSpy = jest.spyOn(chat, 'scrollToBottom');
-
-    // Mock failed fetch response with rate limit error
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      json: async () => ({ error: 'rate limit exceeded' })
-    });
-
-    // Set input value
+  test('H5: Error path - Waku failure should show friendly alert', async () => {
+    mockWakuClient.sendMessage.mockRejectedValueOnce(new Error('network down'));
     const input = document.getElementById('messageInput');
-    input.value = 'Hello world';
+    input.value = 'gm, sers';
 
-    // Call sendMessage
     await chat.sendMessage();
 
-    // Assert
-    expect(mockFetch).toHaveBeenCalled();
-
-    // Check message was removed
+    expect(alertSpy).toHaveBeenCalledWith('Failed to send message: network down');
     expect(chat.messages.length).toBe(0);
-    expect(scrollToBottomSpy).toHaveBeenCalledTimes(2); // Once for optimistic, once for removal
-
-    // Check user-friendly error message
-    expect(alertSpy).toHaveBeenCalledWith(
-      'Failed to send message: Too many messages! Please wait a moment before sending again.'
-    );
   });
 
-  test('H5: Error path - stale timestamp should show specific alert', async () => {
-    // Setup
-    document.getElementById('messageInput').value = 'A valid message';
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 400,
-      json: async () => ({ error: 'stale timestamp' }),
-    });
-
-    // Execute
-    await chat.sendMessage();
-
-    // Assert
-    expect(chat.messages.length).toBe(0); // Optimistic message removed
-    expect(alertSpy).toHaveBeenCalledWith('Failed to send message: Message expired. Please try again.');
-  });
-
-  test('H6: Error path - signature mismatch should show specific alert', async () => {
-    // Setup
-    document.getElementById('messageInput').value = 'A valid message';
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 400,
-      json: async () => ({ error: 'signature mismatch' }),
-    });
-
-    // Execute
-    await chat.sendMessage();
-
-    // Assert
-    expect(alertSpy).toHaveBeenCalledWith('Failed to send message: Signature verification failed. Please reconnect your wallet.');
-  });
-
-  test('H7: Error path - unhandled server error shows generic message', async () => {
-    // Setup
-    document.getElementById('messageInput').value = 'A valid message';
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 500,
-      json: async () => ({ error: 'internal server error' }),
-    });
-
-    // Execute
-    await chat.sendMessage();
-
-    // Assert
-    expect(alertSpy).toHaveBeenCalledWith('Failed to send message: internal server error');
-  });
-
-  test('H8: Input validation - should truncate messages over 500 characters', async () => {
-    // Setup
-    // Mock successful fetch response
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ success: true })
-    });
-
-    // Create a long message (600 characters)
+  test('H6: Input validation - should truncate messages over 500 characters', async () => {
     const longMessage = 'a'.repeat(600);
-    document.getElementById('messageInput').value = longMessage;
-
-    // Spy on console.warn for truncation message
-    const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-
-    // Execute
-    await chat.sendMessage();
-
-    // Assert
-    expect(mockFetch).toHaveBeenCalled();
-
-    // Check the 'content' field in the message payload sent to the backend
-    const fetchCallBody = JSON.parse(mockFetch.mock.calls[0][1].body);
-    const messageObj = JSON.parse(fetchCallBody.message);
-
-    expect(messageObj.content.length).toBe(500);
-    expect(messageObj.content).toBe('a'.repeat(500));
-    expect(consoleWarnSpy).toHaveBeenCalledWith('Message truncated to 500 characters');
-
-    // Restore console.warn
-    consoleWarnSpy.mockRestore();
-  });
-
-  test('H9: Payload composition - should include all required fields', async () => {
-    // Setup
-    chat.selectedName = 'crypto_trader';
-
-    // Mock Date.now to get consistent timestamp
-    const mockTimestamp = 1625097600000;
+    const input = document.getElementById('messageInput');
+    input.value = longMessage;
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const mockTimestamp = 1700000000000;
     jest.spyOn(Date, 'now').mockReturnValue(mockTimestamp);
 
-    // Mock Math.random for consistent nonce
-    const mockRandom = 0.123456789;
-    jest.spyOn(global.Math, 'random').mockReturnValue(mockRandom);
-
-    // Mock successful fetch response
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ success: true })
-    });
-
-    // Create spy for signMessage to capture the message
-    let capturedMessage;
-    chat.signMessage.mockImplementation(async (message) => {
-      capturedMessage = message;
-      return 'mock-signature';
-    });
-
-    // Set input value
-    const input = document.getElementById('messageInput');
-    input.value = 'Hello world';
-
-    // Call sendMessage
     await chat.sendMessage();
 
-    // Parse the captured message
-    const messageObj = JSON.parse(capturedMessage);
+    const signedPayload = JSON.parse(chat.signMessage.mock.calls[0][0]);
+    expect(signedPayload.content.length).toBe(500);
+    expect(signedPayload.content).toBe('a'.repeat(500));
+    expect(warnSpy).toHaveBeenCalledWith('Message truncated to 500 characters');
 
-    // Assert all required fields are present
-    expect(messageObj).toEqual({
-      address: '0x1234567890abcdef1234567890abcdef12345678',
-      name: 'crypto_trader',
-      content: 'Hello world',
-      timestamp: mockTimestamp,
-      pair: 'ETH-USDC',
-      market: 'Perps',
-      room: 'ETH-USDC_Perps',
-      nonce: expect.any(String)
-    });
-
-    // Verify nonce exists and is correctly formed
-    expect(messageObj.nonce).toContain(mockTimestamp.toString());
-    expect(messageObj.nonce).toContain(mockRandom.toString(36).substr(2, 9));
-
-    // Restore mocks
+    warnSpy.mockRestore();
     Date.now.mockRestore();
-    Math.random.mockRestore();
   });
 });
 
@@ -1389,7 +1208,7 @@ describe('HyperliquidChat - Module I: Market monitoring', () => {
 
   test('I3: Header update - should update pair, market, and placeholder', () => {
     const chat = new HyperliquidChat();
-    chat.currentPair = 'SOL-USDC';
+    chat.currentPair = 'HYPE-USDC';
     chat.currentMarket = 'Spot';
 
     // Call updateChatHeader
@@ -1400,13 +1219,13 @@ describe('HyperliquidChat - Module I: Market monitoring', () => {
     const marketElement = document.querySelector('.hl-chat-market');
     const inputElement = document.getElementById('messageInput');
 
-    expect(pairElement.textContent).toBe('SOL-USDC');
+    expect(pairElement.textContent).toBe('HYPE-USDC');
     expect(marketElement.textContent).toBe('Spot Chat');
-    expect(inputElement.placeholder).toBe('Chat with SOL-USDC_Spot traders...');
+    expect(inputElement.placeholder).toBe('Chat with HYPE-USDC_Spot traders...');
   });
 });
 
-describe('HyperliquidChat - Module J: Header and visibility helpers', () => {
+describe('HyperliquidChat - Module J: Header & visibility helpers', () => {
   let chat;
 
   beforeEach(() => {
@@ -1510,7 +1329,7 @@ describe('HyperliquidChat - Module J: Header and visibility helpers', () => {
   });
 });
 
-describe('HyperliquidChat - Module K: Wallet bridge wrappers', () => {
+describe('HyperliquidChat - Module K: Wallet Bridge wrappers', () => {
   let chat;
 
   beforeEach(() => {
@@ -1525,7 +1344,6 @@ describe('HyperliquidChat - Module K: Wallet bridge wrappers', () => {
     
     // Reset wallet state for testing
     chat.walletAddress = null;
-    chat.jwtToken = null;
   });
 
   afterEach(() => {
@@ -1534,10 +1352,10 @@ describe('HyperliquidChat - Module K: Wallet bridge wrappers', () => {
   });
 
   test('K1: requestAccounts - should post a HL_CONNECT_WALLET_REQUEST message', () => {
-    // Call the real method
+    // Call real method
     chat.requestAccounts();
 
-    // Assert that the correct message was posted to the window
+    // Assert that correct message was posted to window
     expect(window.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'HL_CONNECT_WALLET_REQUEST'
@@ -1549,12 +1367,12 @@ describe('HyperliquidChat - Module K: Wallet bridge wrappers', () => {
   test('K2: signMessage - should post a HL_SIGN_REQUEST message with correct payload', () => {
     // Setup
     chat.walletAddress = '0x123abc';
-    const messageToSign = 'Hello, Hyperliquid!';
+    const messageToSign = 'gm, sers.';
 
-    // Call the real method
+    // Call real method
     chat.signMessage(messageToSign);
 
-    // Assert that the correct message was posted
+    // Assert that correct message was posted
     expect(window.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'HL_SIGN_REQUEST',
@@ -1587,8 +1405,8 @@ describe('HyperliquidChat - Module L: Utilities', () => {
     const shortAddress = '0x123456';
     expect(chat.formatAddress(shortAddress)).toBeTruthy();
 
-    // Skip testing edge cases that may not be handled by the implementation
-    // The real implementation doesn't handle null/empty values
+    // Skip testing edge cases that may not be handled by our implementation
+    // Real implementation doesn't handle null/empty values
   });
 
   test('L2: formatTime - should format timestamp correctly', () => {
@@ -1609,7 +1427,7 @@ describe('HyperliquidChat - Module L: Utilities', () => {
     const unsafeString = '<script>alert("XSS & danger");</script> \' / "quotes"';
     const escapedString = chat.escapeHtml(unsafeString);
 
-    // Verify the string is different from the original and contains no unsafe characters
+    // Verify the string is different from original and contains no unsafe characters
     expect(escapedString).not.toBe(unsafeString);
     expect(escapedString).not.toContain('<script>');
     expect(escapedString).not.toContain('</script>');
@@ -1621,70 +1439,64 @@ describe('HyperliquidChat - Module L: Utilities', () => {
     expect(escapedString).toContain('&amp;'); // & is escaped
 
     // Don't verify exact full string as implementation might vary
-    // Just check that the original unsafe characters are properly escaped
+    // Just check properly escaped characters
   });
 });
 
 describe('HyperliquidChat - Module M: Wallet Connection', () => {
   let chat;
-  let mockFetch;
-
-  // Use HyperliquidChat loaded in beforeAll (kept for compatibility)
+  let alertSpy;
 
   beforeEach(() => {
-    // Reset DOM
     document.body.innerHTML = '';
+    alertSpy = jest.spyOn(window, 'alert').mockImplementation(() => {});
 
-    // Create auth bar for UI update
-    const authBar = document.createElement('div');
-    authBar.id = 'chatAuthBar';
-    document.body.appendChild(authBar);
-
-    // Mock fetch
-    mockFetch = jest.fn();
-    global.fetch = mockFetch;
-
-    // Mock alert
-    jest.spyOn(window, 'alert').mockImplementation(() => {});
-
-    // Mock the Supabase dynamic import
-    const dynamicImport = { mockResolvedValue: () => {} };
-
-    // Create instance of the real class
     chat = new HyperliquidChat();
-    chat.createChatWidget = jest.fn(); // Mock createChatWidget to avoid DOM manipulation
-
-    // Mock updateAuthUI to check its calls
-    chat.updateAuthUI = jest.fn();
+    chat.createChatWidget = jest.fn();
+    chat.extensionAPI = null;
+    chat.extensionAPI = null;
+    chat.extensionAPI = null;
+    jest.spyOn(chat, 'fetchHLNames').mockResolvedValue(['hl-name']);
+    jest.spyOn(chat, 'loadChatHistoryWithRetry').mockResolvedValue();
+    jest.spyOn(chat, 'subscribeBroadcast').mockImplementation(() => {});
   });
 
-  test('M1: connectWallet should handle user rejecting connection request', async () => {
-    // Mock the requestAccounts to reject the request
+  afterEach(() => {
+    alertSpy.mockRestore();
+    jest.restoreAllMocks();
+  });
+
+  test('M1: handles user rejection', async () => {
     jest.spyOn(chat, 'requestAccounts').mockRejectedValue(new Error('User rejected request'));
 
     await chat.connectWallet();
 
     expect(chat.walletAddress).toBe('');
-    expect(chat.jwtToken).toBe(null); // Initial value
-    expect(chat.updateAuthUI).not.toHaveBeenCalled(); // UI remains in disconnected state
-    expect(window.alert).toHaveBeenCalledWith('User rejected request');
+    expect(alertSpy).toHaveBeenCalledWith('User rejected request');
   });
 
-  test('M2: handleBackendAuth should handle failed fetch to /auth', async () => {
-    // Mock a successful wallet connection but a failed backend auth
+  test('M2: stores wallet & names on success', async () => {
     jest.spyOn(chat, 'requestAccounts').mockResolvedValue(['0x123abc']);
-    jest.spyOn(chat, 'signMessage').mockResolvedValue('mock-signature');
-
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 401,
-      json: async () => ({ error: 'Authentication failed' })
-    });
+    jest.spyOn(chat, 'authenticateWallet').mockResolvedValue({ signature: '0x', timestamp: 0 });
+    chat.wakuClient = { dummy: true };
 
     await chat.connectWallet();
 
-    expect(chat.walletAddress).toBe('0x123abc'); // Address is set before auth
-    expect(chat.jwtToken).toBe(null); // JWT is NOT set
-    expect(window.alert).toHaveBeenCalledWith('Authentication failed');
+    expect(chat.walletAddress).toBe('0x123abc');
+    expect(chat.availableNames).toEqual(['hl-name']);
+    expect(chat.selectedName).toBe('hl-name');
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(chat.loadChatHistoryWithRetry).toHaveBeenCalled();
+    expect(chat.subscribeBroadcast).toHaveBeenCalled();
+  });
+
+  test('M3: surfaces signature failures', async () => {
+    jest.spyOn(chat, 'requestAccounts').mockResolvedValue(['0x123abc']);
+    jest.spyOn(chat, 'authenticateWallet').mockRejectedValueOnce(new Error('bad sig'));
+
+    await chat.connectWallet();
+
+    expect(chat.walletAddress).toBe('');
+    expect(alertSpy).toHaveBeenCalledWith('Signature verification failed. Check console.');
   });
 });
