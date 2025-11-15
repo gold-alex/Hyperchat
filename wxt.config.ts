@@ -7,10 +7,10 @@ export default defineConfig({
     name: 'Hyperliquid Chat',
     version: '1.0.0',
     description: 'Chat with traders on Hyperliquid',
-    permissions: ['activeTab', 'storage', 'scripting', 'sidePanel', 'contextMenus'],
+    permissions: ['activeTab', 'tabs', 'storage', 'scripting', 'sidePanel', 'contextMenus'],
     host_permissions: [
-      'https://app.hyperliquid.xyz/*',
-      'ws://10.0.0.58:8000/'
+	  'https://app.hyperliquid.xyz/*',
+	  'ws://10.0.0.58:8000/'
     ],
     action: {
       default_title: 'Open Hyperliquid Chat',
@@ -36,8 +36,10 @@ export default defineConfig({
         ],
         matches: ['https://app.hyperliquid.xyz/*']
       }
-    ]
+    ],
   }),
+
+  outDir: "dist",
 
   // Ensure Vite exposes VITE_ env vars to our code
   vite: () => ({
