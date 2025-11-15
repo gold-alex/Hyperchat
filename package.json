@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build:proto": "pbjs -t static-module -w es6 -p lib lib/chat-message.proto > lib/chat-message.js",
+    "build:proto": "pbjs -t static-module -w es6 -p lib lib/chat-message.proto > lib/chat-message.js && node scripts/postprocess-proto.js",
     "build": "pnpm build:proto && wxt build",
     "dev:ext": "wxt dev",
     "preview": "wxt build",
