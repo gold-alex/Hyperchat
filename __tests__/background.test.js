@@ -187,12 +187,12 @@ describe('Background Service Worker', () => {
       
       // Execute the onInstalled listener directly
       const onInstalledHandler = () => {
-        console.log("Hyperliquid Chat extension installed");
+        console.log("Hyperchat extension installed");
       };
       onInstalledHandler();
       
       // Assert
-      expect(consoleSpy).toHaveBeenCalledWith('Hyperliquid Chat extension installed');
+      expect(consoleSpy).toHaveBeenCalledWith('Hyperchat extension installed');
       
       // Cleanup
       consoleSpy.mockRestore();

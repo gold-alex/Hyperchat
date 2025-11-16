@@ -7,7 +7,7 @@ const contentCssPath = path.resolve(repoRoot, 'styles/content.css');
 export default defineConfig({
   manifest: async () => ({
     manifest_version: 3,
-    name: 'Hyperliquid Chat',
+    name: 'Hyperchat',
     version: '1.0.0',
     description: 'Chat with traders on Hyperliquid',
     permissions: ['activeTab', 'tabs', 'storage', 'scripting', 'sidePanel', 'contextMenus'],
@@ -16,7 +16,7 @@ export default defineConfig({
 	  'ws://10.0.0.58:8000/'
     ],
     action: {
-      default_title: 'Open Hyperliquid Chat',
+      default_title: 'Open Hyperchat',
     },
     side_panel: {
       default_path: 'sidepanel.html',
