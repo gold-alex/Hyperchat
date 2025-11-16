@@ -21,7 +21,7 @@ describe('Wallet Bridge (Vitest)', () => {
     });
 
     // Dynamically load the bridge (IIFE) so it registers listeners
-    await import('../wallet-bridge.js');
+    await import('../public/wallet-bridge.js');
 
     // Restore addEventListener for any non-message listeners
     window.addEventListener = originalAddEventListener;

@@ -1,6 +1,9 @@
 import { defineConfig } from 'wxt';
 import path from 'node:path';
 
+const repoRoot = path.resolve(new URL('.', import.meta.url).pathname);
+const contentCssPath = path.resolve(repoRoot, 'styles/content.css');
+
 export default defineConfig({
   manifest: async () => ({
     manifest_version: 3,
@@ -46,6 +49,12 @@ export default defineConfig({
     define: {
       __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
     },
+    resolve: {
+      alias: {
+        '/content.css': contentCssPath,
+        'content.css': contentCssPath,
+      },
+    },
   }),
 
   // Copy required static assets (lib/, wallet-bridge.js, content.css) into the build output
@@ -57,7 +66,7 @@ export default defineConfig({
       };
 
       // Copy wallet bridge used by content script injected into page context
-      add(path.resolve(root, 'wallet-bridge.js'), 'wallet-bridge.js');
+      add(path.resolve(root, 'public/wallet-bridge.js'), 'wallet-bridge.js');
 
       // Copy chat widget launcher (page) assets so background can open it
       // Note: entrypoints/chat-widget/index.html builds to chat-widget.html; this
@@ -79,7 +88,7 @@ export default defineConfig({
       }
 
       // Copy a stable CSS file for sidepanel/chat-widget pages
-      add(path.resolve(root, 'content.css'), 'content.css');
+      add(path.resolve(root, 'styles/content.css'), 'content.css');
     },
   },
 });

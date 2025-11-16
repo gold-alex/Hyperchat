@@ -1,5 +1,5 @@
 import { defineContentScript } from 'wxt/sandbox';
-import '../content.css';
+import '../styles/content.css';
 import { browser } from 'wxt/browser';
 import { HyperliquidChat } from '../src/hyperliquid-chat.js';
 

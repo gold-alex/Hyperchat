@@ -17,9 +17,20 @@ const isPromise = (value) => !!value && typeof value.then === 'function';
 const storageGet = async (api, keys) => {
   if (!api?.storage?.local?.get) return {};
   try {
-    const result = api.storage.local.get(keys);
-    if (isPromise(result)) return result;
-    return await new Promise((resolve) => api.storage.local.get(keys, (items) => resolve(items || {})));
+    return await new Promise((resolve) => {
+      let settled = false;
+      const done = (items) => {
+        if (settled) return;
+        settled = true;
+        resolve(items || {});
+      };
+      const result = api.storage.local.get(keys, done);
+      if (isPromise(result)) {
+        result.then(done).catch(() => done({}));
+      } else if (api.storage.local.get.length <= 1) {
+        done(result);
+      }
+    });
   } catch (_) {
     return {};
   }
@@ -28,9 +39,20 @@ const storageGet = async (api, keys) => {
 const storageSet = async (api, data) => {
   if (!api?.storage?.local?.set) return;
   try {
-    const result = api.storage.local.set(data);
-    if (isPromise(result)) return await result;
-    await new Promise((resolve) => api.storage.local.set(data, () => resolve()));
+    await new Promise((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      const result = api.storage.local.set(data, done);
+      if (isPromise(result)) {
+        result.then(done).catch(done);
+      } else if (api.storage.local.set.length <= 1) {
+        done();
+      }
+    });
   } catch (_) {
     // Ignore storage errors in non-extension contexts
   }
