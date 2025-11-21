@@ -3,14 +3,23 @@ version: "3.8"
 services:
   nwaku:
     image: wakuorg/nwaku:v0.36.0
-    container_name: hyperchat-testnet-nwaku
+    container_name: nwaku-node
+    restart: unless-stopped
+    networks:
+      waku_net:
+        ipv4_address: ${NWAKU_IP:-172.28.0.10}
+    ports:
+      - "${WAKU_WS_PORT:-8000}:8000"   # WebSocket (exposed in test mode)
+      - "${WAKU_REST_PORT:-8645}:8645" # REST API (exposed in test mode)
     volumes:
-      - ./nwaku_db:/var/db # Persist the message store
-    # Note: No ports are exposed to the host here. Caddy will access it via the internal Docker network.
+      - ${WAKU_DB_PATH:-./nwaku_db}:/var/db
+    environment:
+      - WAKU_MODE=${WAKU_MODE:-test}
     command:
       - --listen-address=0.0.0.0
-      - --nat=extip:${PUBLIC_IP}
-      - --dns4-domain-name=${WAKU_WSS_DOMAIN}
+      - --nat=extip:${PUBLIC_IP:-127.0.0.1}
+      - --dns4-domain-name=${WAKU_WSS_DOMAIN:-}
+      - --tcp-port=60000
       - --relay=true
       - --filter=true
       - --lightpush=true
@@ -18,22 +27,66 @@ services:
       - --rest=true
       - --rest-address=0.0.0.0
       - --rest-port=8645
+      - --rest-admin=true
       - --websocket-support=true
       - --websocket-port=8000
       - --cluster-id=999
       - --shard=0
-      - --nodekey=${NODE_KEY}
+      - --nodekey=${NODE_KEY:-}
       - --store=true
       - --store-message-retention-policy=time:43200
-      - --store-message-db-url="sqlite://var/db/waku_messages.db"
+      - --store-message-db-url=sqlite:///var/db/waku_messages.db
+
+  nwaku-relay:
+    image: wakuorg/nwaku:v0.36.0
+    container_name: nwaku-relay
+    restart: unless-stopped
+    depends_on:
+      - nwaku
+    networks:
+      waku_net:
+        ipv4_address: ${NWAKU_RELAY_IP:-172.28.0.11}
+    ports:
+      - "${WAKU_RELAY_WS_PORT:-8100}:8100"
+      - "${WAKU_RELAY_REST_PORT:-8745}:8745"
+    volumes:
+      - ${WAKU_RELAY_DB_PATH:-./nwaku_relay_db}:/var/db
+    environment:
+      - WAKU_MODE=${WAKU_RELAY_MODE:-test}
+    command:
+      - --listen-address=0.0.0.0
+      - --nat=extip:${PUBLIC_IP:-127.0.0.1}
+      - --relay=true
+      - --filter=false
+      - --lightpush=false
+      - --discv5-discovery=false
+      - --rest=true
+      - --rest-address=0.0.0.0
+      - --rest-port=8745
+      - --rest-admin=true
+      - --websocket-support=true
+      - --websocket-port=8100
+      - --cluster-id=999
+      - --shard=0
+      - --store=false
+      - --staticnode=/ip4/${NWAKU_IP:-172.28.0.10}/tcp/60000/p2p/${PRIMARY_WAKU_PEER_ID:?Set PRIMARY_WAKU_PEER_ID in docker/.env}
+
+  sqlite:
+    build:
+      context: .
+      dockerfile: Dockerfile.sqlite
+    image: sqlite-cli:alpine
+    volumes:
+      - ${WAKU_DB_PATH:-./nwaku_db}:/db
 
   caddy:
     image: caddy:2
     container_name: caddy-proxy
+    profiles: ["production"]
     restart: unless-stopped
     ports:
-      - "80:80"   # For initial Let's Encrypt challenge
-      - "443:443" # For HTTPS and WSS traffic
+      - "80:80"
+      - "443:443"
     environment:
       - WAKU_WSS_DOMAIN=${WAKU_WSS_DOMAIN}
       - WAKU_API_DOMAIN=${WAKU_API_DOMAIN}
@@ -42,7 +95,16 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     command: sh -c "apk add --no-cache gettext && envsubst < /etc/caddy/Caddyfile.template > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"
+    depends_on:
+      - nwaku
     
 volumes:
   caddy_data:
   caddy_config:
+
+networks:
+  waku_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24

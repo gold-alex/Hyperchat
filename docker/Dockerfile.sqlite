@@ -1,0 +1,12 @@
+FROM alpine:3.19
+
+RUN apk add --no-cache sqlite sqlite-libs
+
+# Mount the DB directory from the nwaku service to /db
+VOLUME ["/db"]
+
+WORKDIR /work
+
+# Make usage simple: `docker-compose run --rm sqlite /db/waku_messages.db 'SELECT ...'`
+ENTRYPOINT ["sqlite3"]
+
