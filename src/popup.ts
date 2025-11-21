@@ -5,7 +5,7 @@ export function initPopup() {
   // Simple inline UI similar to original popup
   root.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:12px;padding:16px;background:#0a1f1c;color: #f6fefb;width:320px">
-      <div style="font-weight:600;color: #50d2c1">Hyperliquid Chat</div>
+      <div style="font-weight:600;color: #50d2c1">Hyperchat</div>
       <div style="color: #a0a0a0">Navigate to app.hyperliquid.xyz/trade to start chatting</div>
       <button id="openChat" style="background:#50d2c1;color:#0a1f1c;border:none;padding:8px 12px;border-radius:6px;cursor:pointer">Open Chat</button>
     </div>
