@@ -22,11 +22,14 @@ let hasLoadedInitialData = false;
 // Initialize Waku client
 async function initializeWaku() {
   try {
+    const env = (import.meta as any).env ?? {};
     const wakuModule: any = await import(chrome.runtime.getURL('lib/waku-chat-client.js'));
     wakuClient = new wakuModule.WakuChatClient({
-      wakuNodeURI: (import.meta as any).env?.VITE_WAKU_NODE_URI,
-      wakuNodePort: (import.meta as any).env?.VITE_WAKU_NODE_PORT,
-      wakuNodePeerId: (import.meta as any).env?.VITE_WAKU_NODE_PEER_ID,
+      wakuNodeURI: env.VITE_WAKU_NODE_URI || 'localhost',
+      wakuNodePort: typeof env.VITE_WAKU_NODE_PORT === 'string'
+        ? parseInt(env.VITE_WAKU_NODE_PORT, 10)
+        : (env.VITE_WAKU_NODE_PORT || 443),
+      wakuNodePeerId: env.VITE_WAKU_NODE_PEER_ID || 'PEER_ID',
       onMessageReceived: (message: any) => { handleNewMessage(message); },
       onHistoryLoaded: (loadedMessages: any[]) => { handleHistoryLoaded(loadedMessages); },
       onConnectionStatusChange: (connected: boolean) => { handleConnectionStatusChange(connected); },
@@ -76,6 +79,10 @@ async function restoreWalletConnection() {
       availableNames = result.availableNames || [];
       selectedName = result.selectedName || '';
       hasBackendAuth = result.hasBackendAuth || false;
+      // Sync wallet info to Waku client if available
+      if (wakuClient) {
+        wakuClient.setWalletInfo(walletAddress, selectedName);
+      }
     }
   } catch (error) { console.error('Failed to restore wallet connection in side panel:', error); }
 }
@@ -219,7 +226,13 @@ function setupEventListeners() {
   const messageInput = document.getElementById('messageInput');
   if (messageInput) messageInput.addEventListener('keypress', (e: any) => { if (e.key === 'Enter') sendMessage(); });
   const nameSelect = document.getElementById('hlNameSelect') as HTMLSelectElement | null;
-  if (nameSelect) nameSelect.addEventListener('change', (e: any) => { selectedName = e.target.value; });
+  if (nameSelect) nameSelect.addEventListener('change', (e: any) => {
+    selectedName = e.target.value;
+    // Sync updated name to Waku client
+    if (wakuClient && walletAddress) {
+      wakuClient.setWalletInfo(walletAddress, selectedName);
+    }
+  });
 }
 
 async function loadChatHistory() {
@@ -241,6 +254,7 @@ async function sendMessage() {
   if (!walletAddress) { alert('Please connect your wallet first'); return; }
   if (wakuClient) {
     try {
+      wakuClient.setRoom(currentPair, currentMarket);
       wakuClient.setWalletInfo(walletAddress, selectedName);
       const [tab]: any = await browser.tabs.query({ active: true, currentWindow: true });
       if (!tab || !tab.url || !tab.url.includes('app.hyperliquid.xyz')) { alert('Please navigate to app.hyperliquid.xyz/trade to send messages'); return; }
@@ -290,12 +304,34 @@ function scrollToBottom() { if (!autoScroll) return; const messagesContainer = d
 
 browser.runtime.onMessage.addListener((request: any, _sender: any, _sendResponse: any) => {
   if (request.action === 'walletConnected') {
-    walletAddress = request.walletAddress; availableNames = request.availableNames || []; selectedName = request.selectedName || ''; hasBackendAuth = request.hasBackendAuth || false;
-    if (hasLoadedInitialData && currentPair !== 'UNKNOWN') { createChatUI(); setupEventListeners(); loadChatHistory(); }
+    walletAddress = request.walletAddress;
+    availableNames = request.availableNames || [];
+    selectedName = request.selectedName || '';
+    hasBackendAuth = request.hasBackendAuth || false;
+    // Sync wallet info to Waku client
+    if (wakuClient) {
+      wakuClient.setWalletInfo(walletAddress, selectedName);
+    }
+    if (hasLoadedInitialData && currentPair !== 'UNKNOWN') {
+      createChatUI();
+      setupEventListeners();
+      loadChatHistory();
+    }
   } else if (request.action === 'walletDisconnected') {
-    walletAddress = ''; availableNames = []; selectedName = ''; hasBackendAuth = false;
+    walletAddress = '';
+    availableNames = [];
+    selectedName = '';
+    hasBackendAuth = false;
+    // Clear wallet info from Waku client
+    if (wakuClient) {
+      wakuClient.setWalletInfo('', '');
+    }
     browser.storage.local.remove(['walletConnected', 'walletAddress', 'availableNames', 'selectedName', 'hasBackendAuth']).catch(console.error);
-    if (hasLoadedInitialData && currentPair !== 'UNKNOWN') { createChatUI(); setupEventListeners(); loadChatHistory(); }
+    if (hasLoadedInitialData && currentPair !== 'UNKNOWN') {
+      createChatUI();
+      setupEventListeners();
+      loadChatHistory();
+    }
   }
 });
 

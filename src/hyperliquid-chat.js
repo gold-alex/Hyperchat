@@ -423,6 +423,7 @@ export class HyperliquidChat {
       return;
     }
     try {
+      this.wakuClient.setRoom(this.currentPair, this.currentMarket);
       this.wakuClient.setWalletInfo(this.walletAddress, this.selectedName);
       const timestamp = Date.now();
       const dataToSign = JSON.stringify({ timestamp, content });

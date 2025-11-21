@@ -30,20 +30,31 @@ export default defineContentScript({
           onMessageReceived: (message: any) => { if (chatInstance) chatInstance.handleNewMessage(message); },
           onHistoryLoaded: (messages: any[]) => { if (chatInstance) chatInstance.handleHistoryLoaded(messages); },
           onConnectionStatusChange: (connected: boolean) => { if (chatInstance) chatInstance.handleConnectionStatusChange(connected); },
+          onError: (error: any) => { console.error('Waku error:', error); },
         });
         const success = await wakuClient.initialize();
-        if (success) console.log('Waku client initialized successfully');
-        else console.error('Failed to initialize Waku client');
+        if (success) {
+          console.log('Waku client initialized successfully');
+          initializeChat();
+        } else {
+          console.error('Failed to initialize Waku client');
+          initializeChatInReadOnlyMode();
+        }
       } catch (error) {
         console.error('Failed to initialize Waku:', error);
-      } finally {
-        initializeChat();
+        initializeChatInReadOnlyMode();
       }
     }
 
     function initializeChat() {
       chatInstance = new HyperliquidChat({ extensionAPI: browser });
       chatInstance.wakuClient = wakuClient;
+      chatInstance.init();
+    }
+
+    function initializeChatInReadOnlyMode() {
+      chatInstance = new HyperliquidChat({ extensionAPI: browser });
+      chatInstance.wakuClient = null; // Explicitly null to indicate read-only mode
       chatInstance.init();
     }
 
