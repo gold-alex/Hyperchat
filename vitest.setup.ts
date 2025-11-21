@@ -8,6 +8,39 @@ global.TextEncoder = TextEncoder as any;
 // @ts-ignore
 global.TextDecoder = TextDecoder as any;
 
+// Ensure WebCrypto (js-waku/libp2p often requires it)
+// @ts-ignore
+if (!(global as any).crypto || !(global as any).crypto.getRandomValues) {
+  // @ts-ignore
+  (global as any).crypto = require('node:crypto').webcrypto as any;
+}
+
+// Ensure WebSocket in Node test env
+// @ts-ignore
+if (!(global as any).WebSocket) {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const WS = require('ws');
+  // @ts-ignore
+  (global as any).WebSocket = WS;
+}
+
+// Polyfill Promise.withResolvers for Node < 22 (used by js-waku)
+// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/withResolvers
+// @ts-ignore
+if (typeof (Promise as any).withResolvers !== 'function') {
+  // @ts-ignore
+  (Promise as any).withResolvers = function withResolvers<T>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res; // eslint-disable-line @typescript-eslint/no-unused-vars
+      reject = rej; // eslint-disable-line @typescript-eslint/no-unused-vars
+    });
+    // Match the modern API shape
+    return { promise, resolve, reject };
+  };
+}
+
 // Provide a fake browser/chrome API for unit tests
 // Matches WXT guidance: https://wxt.dev/guide/essentials/unit-testing.html
 // fakeBrowser implements both browser and chrome APIs
