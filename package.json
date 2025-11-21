@@ -15,7 +15,9 @@
     "start": "next start",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "nwaku:debug": "node scripts/nwaku-debug.js",
+    "nwaku:seed": "node scripts/nwaku-seed.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
