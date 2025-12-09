@@ -42,7 +42,7 @@ async function fetchJson(url) {
 
 function tryDockerComposeSql(query) {
   // Runs sqlite sidecar to query the DB; expects docker-compose.yml in ./docker
-  const dockerDir = path.join(__dirname, '..', 'docker');
+  const dockerDir = path.join(__dirname, '..');
   const cmd = `docker-compose run --rm sqlite /db/waku_messages.db "${query.replace(/"/g, '""')}"`;
   const res = spawnSync('bash', ['-lc', cmd], { cwd: dockerDir, encoding: 'utf8' });
   if (res.status === 0) {
@@ -153,9 +153,7 @@ function prettyPrint(title, obj) {
   try {
     const candidateDirs = [
       process.env.WAKU_DB_PATH,
-      path.join(__dirname, '..', 'docker', 'nwaku_test_db'),
       path.join(__dirname, '..', 'nwaku_test_db'),
-      path.join(__dirname, '..', 'docker', 'nwaku_db'),
       path.join(__dirname, '..', 'nwaku_db'),
       './nwaku_test_db',
       './docker/nwaku_test_db',
