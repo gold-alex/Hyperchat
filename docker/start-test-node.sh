@@ -6,6 +6,10 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+HOST_WAKU_DB_DIR="$SCRIPT_DIR/nwaku_test_db"
+HOST_WAKU_RELAY_DB_DIR="$SCRIPT_DIR/nwaku_relay_test_db"
+
+mkdir -p "$HOST_WAKU_DB_DIR" "$HOST_WAKU_RELAY_DB_DIR"
 
 cd "$SCRIPT_DIR"
 
@@ -40,10 +44,10 @@ fi
 # Ensure we're using test configuration
 export WAKU_WS_PORT=8000
 export WAKU_REST_PORT=8645
-export WAKU_DB_PATH=./nwaku_test_db
+export WAKU_DB_PATH="$HOST_WAKU_DB_DIR"
 export WAKU_RELAY_WS_PORT=8100
 export WAKU_RELAY_REST_PORT=8745
-export WAKU_RELAY_DB_PATH=./nwaku_relay_test_db
+export WAKU_RELAY_DB_PATH="$HOST_WAKU_RELAY_DB_DIR"
 # Force deterministic intra-docker IPs so secondary peers can dial the primary
 export NWAKU_IP=${NWAKU_IP:-172.28.0.10}
 export NWAKU_RELAY_IP=${NWAKU_RELAY_IP:-172.28.0.11}
@@ -122,7 +126,7 @@ if [ -n "$PEER_ID" ]; then
     echo "   Check DB (sqlite sidecar):"
     echo "                  docker-compose run --rm sqlite /db/waku_messages.db 'SELECT COUNT(*) FROM messages;'"
     echo "   Alt: host sqlite3:"
-    echo "                  sqlite3 '$SCRIPT_DIR/${WAKU_DB_PATH#./}/waku_messages.db' 'SELECT COUNT(*) FROM messages;'"
+    echo "                  sqlite3 '$HOST_WAKU_DB_DIR/waku_messages.db' 'SELECT COUNT(*) FROM messages;'"
     echo "   REST info:     curl http://localhost:8645/debug/v1/info | jq"
     echo "   Relay REST:    curl http://localhost:${WAKU_RELAY_REST_PORT}/debug/v1/info | jq"
     echo "   Store query:   curl 'http://localhost:8645/store/v3/messages?contentTopics=/hl-chat/1/BTC-USD_Perps/proto' | jq"

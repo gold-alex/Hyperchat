@@ -42,7 +42,7 @@ async function fetchJson(url) {
 
 function tryDockerComposeSql(query) {
   // Runs sqlite sidecar to query the DB; expects docker-compose.yml in ./docker
-  const dockerDir = path.join(__dirname, '..');
+  const dockerDir = path.join(__dirname, '..', 'docker');
   const cmd = `docker-compose run --rm sqlite /db/waku_messages.db "${query.replace(/"/g, '""')}"`;
   const res = spawnSync('bash', ['-lc', cmd], { cwd: dockerDir, encoding: 'utf8' });
   if (res.status === 0) {
@@ -172,7 +172,7 @@ function prettyPrint(title, obj) {
     // First, try a direct sqlite3 via docker run against the resolved path
     const sqliteCmd = `docker run --rm -v "${path.dirname(dbFile)}":/db nouchka/sqlite3 /db/waku_messages.db "${sql.replace(/"/g, '""')}"`;
     const direct = spawnSync('bash', ['-lc', sqliteCmd], { encoding: 'utf8' });
-    if (direct.status === 0 && direct.stdout) {
+    if (direct.status === 0) {
       out = direct.stdout.trim();
     } else {
       // fall back to legacy helpers
