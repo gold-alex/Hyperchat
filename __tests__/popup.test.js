@@ -36,7 +36,7 @@ describe('Popup Script', () => {
     // Verify the header text is rendered
     const headerText = document.querySelector('div[style*="color: #50d2c1"]');
     expect(headerText).not.toBeNull();
-    expect(headerText.textContent.trim()).toBe('Hyperliquid Chat');
+    expect(headerText.textContent.trim()).toBe('Hyperchat');
 
     // Verify the instruction text is rendered
     const instructionText = document.querySelector('div[style*="color: #a0a0a0"]');
