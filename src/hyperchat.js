@@ -1,4 +1,10 @@
 import { verifyMessage } from 'viem';
+import {
+  buildSafeNameOptions,
+  escapeUnsafeHtml,
+  sanitizeDisplayName,
+  sanitizeRoomId,
+} from './ui/chat-html-safety.js';
 
 // Test if we are undefined or in test environment
 const isTestEnv = typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test';
@@ -270,15 +276,19 @@ export class Hyperchat {
   }
 
   getChatHTML() {
-    const roomId = `${this.currentPair}_${this.currentMarket}`;
+    const roomId = sanitizeRoomId(this.currentPair, this.currentMarket);
+    const safePair = escapeUnsafeHtml(this.currentPair);
+    const safeMarketLabel = `${escapeUnsafeHtml(this.currentMarket)} Chat`;
+    const safeWalletLabel = escapeUnsafeHtml(this.formatAddress(this.walletAddress));
+    const safeNameOptions = buildSafeNameOptions(this.availableNames, this.selectedName);
     const isConnected = !!this.walletAddress;
     const isDisabled = !this.walletAddress || !this.wakuClient;
     return `
       <div class="hl-chat-container ${this.isVisible ? 'visible' : ''}">
         <div class="hl-chat-header">
           <div class="hl-chat-title">
-            <span class="hl-chat-pair">${this.currentPair}</span>
-            <span class="hl-chat-market">${this.currentMarket} Chat</span>
+            <span class="hl-chat-pair">${safePair}</span>
+            <span class="hl-chat-market">${safeMarketLabel}</span>
           </div>
           <div class="hl-chat-autoscroll">
             <input type="checkbox" id="autoScrollCheckbox" ${this.autoScroll ? 'checked' : ''}>
@@ -303,8 +313,8 @@ export class Hyperchat {
           <div class="hl-name-bar">
             <label class="hl-name-label">As:</label>
             <select id="hlNameSelect" class="hl-name-select-input">
-              <option value="" ${this.selectedName === '' ? 'selected' : ''}>${this.formatAddress(this.walletAddress)}</option>
-              ${this.availableNames.map((n) => `<option value="${n}" ${n === this.selectedName ? 'selected' : ''}>${n}</option>`).join('')}
+              <option value="" ${this.selectedName === '' ? 'selected' : ''}>${safeWalletLabel}</option>
+              ${safeNameOptions}
             </select>
           </div>
           <div class="hl-chat-input-container">
@@ -321,7 +331,7 @@ export class Hyperchat {
     if (this.messages.length === 0) return '';
     return this.messages.map((msg) => {
       const isOwn = msg.address === this.walletAddress;
-      const displayName = msg.name ? msg.name : this.formatAddress(msg.address);
+      const displayName = sanitizeDisplayName(msg.name, this.formatAddress(msg.address));
       return `
       <div class="hl-message ${isOwn ? 'own' : ''}">
         <div class="hl-message-header">
@@ -501,7 +511,9 @@ export class Hyperchat {
   }
 
   formatAddress(address) {
-    return `${address.slice(0, 6)}...${address.slice(-4)}`;
+    const normalized = String(address ?? '');
+    if (normalized.length <= 10) return normalized;
+    return `${normalized.slice(0, 6)}...${normalized.slice(-4)}`;
   }
 
   formatTime(timestamp) {
@@ -509,9 +521,7 @@ export class Hyperchat {
   }
 
   escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    return escapeUnsafeHtml(text);
   }
 
   notifyUser(message) {

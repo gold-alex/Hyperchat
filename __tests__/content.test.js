@@ -238,6 +238,62 @@ describe('Hyperchat - Module B: HTML building & rendering', () => {
     expect(messageContent.innerHTML).not.toContain('<script>');
     expect(messageContent.textContent).toContain('<script>alert("XSS")</script>');
   });
+
+  test('B6: HTML escaping - should escape script tags in msg.name', () => {
+    chat.messages = [
+      {
+        address: '0x1234567890abcdef1234567890abcdef12345678',
+        name: '<img src=x onerror=alert(1)>',
+        content: 'hello',
+        timestamp: 1625097600000
+      }
+    ];
+
+    const html = chat.renderMessages();
+    document.body.innerHTML = `<div id="messages">${html}</div>`;
+
+    const addressNode = document.querySelector('.hl-message-address');
+    expect(addressNode?.querySelector('img')).toBeNull();
+    expect(addressNode?.innerHTML).not.toContain('<img');
+    expect(addressNode?.textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+
+  test('B7: Connected state - should escape external names in selector options', () => {
+    chat.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
+    chat.availableNames = ['alpha.hl', '"><img src=x onerror=alert(1)>'];
+
+    const html = chat.getChatHTML();
+    document.body.innerHTML = html;
+
+    const select = document.querySelector('#hlNameSelect');
+    expect(select).not.toBeNull();
+    expect(select?.querySelector('img')).toBeNull();
+    expect(select?.innerHTML).not.toContain('<img');
+
+    const optionTexts = Array.from(select?.querySelectorAll('option') || []).map((el) => el.textContent || '');
+    expect(optionTexts).toContain('"><img src=x onerror=alert(1)>');
+  });
+
+  test('B8: Header and placeholder - should escape pair/market labels', () => {
+    chat.currentPair = '<img src=x onerror=alert(1)>';
+    chat.currentMarket = 'Perps<script>alert(1)</script>';
+    chat.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
+
+    const html = chat.getChatHTML();
+    document.body.innerHTML = html;
+
+    const pairNode = document.querySelector('.hl-chat-pair');
+    const marketNode = document.querySelector('.hl-chat-market');
+    const messageInput = document.querySelector('#messageInput');
+
+    expect(pairNode?.querySelector('img')).toBeNull();
+    expect(marketNode?.querySelector('script')).toBeNull();
+    expect(pairNode?.textContent).toContain('<img src=x onerror=alert(1)>');
+    expect(marketNode?.textContent).toContain('Perps<script>alert(1)</script> Chat');
+    const placeholder = messageInput?.getAttribute('placeholder') || '';
+    expect(placeholder).toContain('&lt;img src=x onerror=alert(1)&gt;_Perps&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(placeholder).not.toContain('<script>');
+  });
 });
 
 describe('Hyperchat - Module C: UI event listeners', () => {

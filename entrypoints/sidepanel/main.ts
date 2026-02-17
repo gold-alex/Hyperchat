@@ -1,6 +1,12 @@
 // Migrated from sidepanel.js
 import { browser } from 'wxt/browser';
 import type { Message } from '../../src/messages';
+import {
+  buildSafeNameOptions,
+  escapeUnsafeHtml,
+  sanitizeDisplayName,
+  sanitizeRoomId,
+} from '../../src/ui/chat-html-safety.js';
 console.log('Sidepanel script loaded');
 
 // Get URL parameters for current trading pair/market
@@ -176,15 +182,19 @@ async function syncWithContentScript() {
 
 function createChatUI() {
   const root = document.getElementById('sidepanel-root')!;
-  const roomId = `${currentPair}_${currentMarket}`;
+  const roomId = sanitizeRoomId(currentPair, currentMarket);
+  const safePair = escapeUnsafeHtml(currentPair);
+  const safeMarketLabel = currentMarket ? `${escapeUnsafeHtml(currentMarket)} Chat` : '';
+  const safeWalletLabel = escapeUnsafeHtml(formatAddress(walletAddress));
+  const safeNameOptions = buildSafeNameOptions(availableNames, selectedName);
   const isConnected = !!walletAddress;
   root.innerHTML = `
     <div class="hl-chat-widget">
       <div class="hl-chat-container visible">
         <div class="hl-chat-header">
           <div class="hl-chat-title">
-            <span class="hl-chat-pair">${currentPair}</span>
-            <span class="hl-chat-market">${currentMarket ? currentMarket + ' Chat' : ''}</span>
+            <span class="hl-chat-pair">${safePair}</span>
+            <span class="hl-chat-market">${safeMarketLabel}</span>
           </div>
           <div class="hl-chat-autoscroll">
             <input type="checkbox" id="autoScrollCheckbox" ${autoScroll ? 'checked' : ''}>
@@ -209,8 +219,8 @@ function createChatUI() {
           <div class="hl-name-bar">
             <label class="hl-name-label">As:</label>
             <select id="hlNameSelect" class="hl-name-select-input">
-              <option value="" ${selectedName === '' ? 'selected' : ''}>${formatAddress(walletAddress)}</option>
-              ${availableNames.map((n) => `<option value="${n}" ${n === selectedName ? 'selected' : ''}>${n}</option>`).join('')}
+              <option value="" ${selectedName === '' ? 'selected' : ''}>${safeWalletLabel}</option>
+              ${safeNameOptions}
             </select>
           </div>
           <div class="hl-chat-input-container">
@@ -305,10 +315,14 @@ async function signMessageViaContent(message: string) {
 function updateMessagesUI(customHTML: string | null = null) {
   const messagesContainer = document.getElementById('chatMessages')!;
   if (customHTML) { messagesContainer.innerHTML = customHTML; return; }
-  if (messages.length === 0) { const roomId = `${currentPair}_${currentMarket}`; messagesContainer.innerHTML = `<div class=\"hl-loading\">No messages yet in ${roomId}. Be the first to chat!</div>`; return; }
+  if (messages.length === 0) {
+    const roomId = sanitizeRoomId(currentPair, currentMarket);
+    messagesContainer.innerHTML = `<div class=\"hl-loading\">No messages yet in ${roomId}. Be the first to chat!</div>`;
+    return;
+  }
   messagesContainer.innerHTML = messages.map((msg) => {
     const isOwn = msg.address === walletAddress;
-    const displayName = msg.name || formatAddress(msg.address);
+    const displayName = sanitizeDisplayName(msg.name, formatAddress(msg.address));
     return `
       <div class="hl-message ${isOwn ? 'own' : ''}">
         <div class="hl-message-header">
@@ -327,9 +341,13 @@ function updateChatHeader() {
   if (marketElement) (marketElement as HTMLElement).textContent = currentMarket ? `${currentMarket} Chat` : '';
 }
 
-function formatAddress(address: string) { return `${address.slice(0, 6)}...${address.slice(-4)}`; }
+function formatAddress(address: string) {
+  const normalized = String(address ?? '');
+  if (normalized.length <= 10) return normalized;
+  return `${normalized.slice(0, 6)}...${normalized.slice(-4)}`;
+}
 function formatTime(timestamp: number) { return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
-function escapeHtml(text: string) { const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }
+function escapeHtml(text: string) { return escapeUnsafeHtml(text); }
 function scrollToBottom() { if (!autoScroll) return; const messagesContainer = document.getElementById('chatMessages'); if (messagesContainer) (messagesContainer as HTMLElement).scrollTop = (messagesContainer as HTMLElement).scrollHeight; }
 
 const syncSidepanelPort = browser.runtime.connect({ name: SIDEPANEL_SYNC_PORT });
