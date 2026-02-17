@@ -21,6 +21,7 @@ describe('Wallet Bridge (Vitest)', () => {
     });
 
     // Dynamically load the bridge (IIFE) so it registers listeners
+    // @ts-expect-error non-module script import for side effects only
     await import('../public/wallet-bridge.js');
 
     // Restore addEventListener for any non-message listeners
@@ -59,4 +60,3 @@ describe('Wallet Bridge (Vitest)', () => {
     expect(window.postMessage).toHaveBeenCalledWith({ type: 'HL_SIGN_RESPONSE', id: 'sign-1', signature: '0xsignature' }, '*');
   });
 });
-

@@ -3,16 +3,16 @@
  */
 
 // Load ESM class under Vitest via dynamic import before tests
-var HyperliquidChat;
+var Hyperchat;
 beforeAll(async () => {
-  const mod = await import('../src/hyperliquid-chat.js');
-  HyperliquidChat = mod.HyperliquidChat;
+  const mod = await import('../src/hyperchat.js');
+  Hyperchat = mod.Hyperchat;
 });
 
 // Helper function to set up chat widget DOM
 function setupWidgetDOM() {
   document.body.innerHTML = `
-    <div id="hyperliquid-chat-widget">
+    <div id="hyperchat-widget">
       <div class="hl-chat-container">
         <div class="hl-chat-header">
           <span class="hl-chat-pair"></span>
@@ -42,7 +42,7 @@ function setupWidgetDOM() {
   `;
 }
 
-describe('HyperliquidChat - Module A: Market detection', () => {
+describe('Hyperchat - Module A: Market detection', () => {
   let chat;
 
   beforeEach(() => {
@@ -53,7 +53,7 @@ describe('HyperliquidChat - Module A: Market detection', () => {
     const dynamicImport = { mockResolvedValue: () => {} };
 
     // Instantiate main class
-    chat = new HyperliquidChat();
+    chat = new Hyperchat();
   });
 
   test('A1: Primary selector present - should detect pair & set market to Perps', () => {
@@ -130,10 +130,10 @@ describe('HyperliquidChat - Module A: Market detection', () => {
   });
 });
 
-describe('HyperliquidChat - Module B: HTML building & rendering', () => {
+describe('Hyperchat - Module B: HTML building & rendering', () => {
   let chat;
 
-  // Use HyperliquidChat loaded in beforeAll (kept for compatibility)
+  // Use Hyperchat loaded in beforeAll (kept for compatibility)
 
   beforeEach(() => {
     // Reset DOM
@@ -143,7 +143,7 @@ describe('HyperliquidChat - Module B: HTML building & rendering', () => {
     const dynamicImport = { mockResolvedValue: () => {} };
 
     // Create instance of the real class with test values
-    chat = new HyperliquidChat();
+    chat = new Hyperchat();
     chat.isVisible = false;
     chat.currentPair = 'ETH-USDC';
     chat.currentMarket = 'Perps';
@@ -240,15 +240,15 @@ describe('HyperliquidChat - Module B: HTML building & rendering', () => {
   });
 });
 
-describe('HyperliquidChat - Module C: UI event listeners', () => {
+describe('Hyperchat - Module C: UI event listeners', () => {
   let chat;
 
   beforeEach(() => {
     // Reset DOM and set up the widget
     setupWidgetDOM();
 
-    // Create a real instance of HyperliquidChat
-    chat = new HyperliquidChat();
+    // Create a real instance of Hyperchat
+    chat = new Hyperchat();
 
     // Spy on the methods we want to test
     jest.spyOn(chat, 'toggleChat');
@@ -371,15 +371,15 @@ describe('HyperliquidChat - Module C: UI event listeners', () => {
   });
 });
 
-describe('HyperliquidChat - Module D: Drag behavior', () => {
+describe('Hyperchat - Module D: Drag behavior', () => {
   let chat;
 
   beforeEach(() => {
     // Reset DOM
     document.body.innerHTML = '';
 
-    // Create a real instance of HyperliquidChat
-    chat = new HyperliquidChat();
+    // Create a real instance of Hyperchat
+    chat = new Hyperchat();
   });
 
   test('D1: enableDrag should set cursor style and attach mousedown event listener', () => {
@@ -410,15 +410,15 @@ describe('HyperliquidChat - Module D: Drag behavior', () => {
   });
 });
 
-describe('HyperliquidChat - Module E: Auto-scroll behavior', () => {
+describe('Hyperchat - Module E: Auto-scroll behavior', () => {
   let chat;
 
   beforeEach(() => {
     // Reset DOM
     document.body.innerHTML = '';
 
-    // Create a real instance of HyperliquidChat
-    chat = new HyperliquidChat();
+    // Create a real instance of Hyperchat
+    chat = new Hyperchat();
   });
 
   test('E1: When autoScroll is true - should set scrollTop to scrollHeight', () => {
@@ -459,8 +459,8 @@ describe('HyperliquidChat - Module E: Auto-scroll behavior', () => {
   });
 });
 
-describe('HyperliquidChat - Module F: History loading with retry', () => {
-  let HyperliquidChat;
+describe('Hyperchat - Module F: History loading with retry', () => {
+  let Hyperchat;
   let mockSupabase;
 
   beforeEach(() => {
@@ -481,8 +481,8 @@ describe('HyperliquidChat - Module F: History loading with retry', () => {
       removeChannel: jest.fn()
     };
 
-    // Create a minimal version of HyperliquidChat for testing
-    HyperliquidChat = class {
+    // Create a minimal version of Hyperchat for testing
+    Hyperchat = class {
       constructor() {
         this.currentPair = 'ETH-USDC';
         this.currentMarket = 'Perps';
@@ -566,7 +566,7 @@ describe('HyperliquidChat - Module F: History loading with retry', () => {
   });
 
   test('F1: Supabase not initialized - should exit gracefully', async () => {
-    const chat = new HyperliquidChat();
+    const chat = new Hyperchat();
     chat.supabase = null;
 
     await chat.loadChatHistoryFromSupabase();
@@ -577,7 +577,7 @@ describe('HyperliquidChat - Module F: History loading with retry', () => {
   });
 
   test('F2: Pair unknown - should return early without querying', async () => {
-    const chat = new HyperliquidChat();
+    const chat = new Hyperchat();
     chat.currentPair = 'UNKNOWN';
     chat.supabase = mockSupabase;
 
@@ -588,7 +588,7 @@ describe('HyperliquidChat - Module F: History loading with retry', () => {
   });
 
   test('F3: Empty results - should show no messages UI', async () => {
-    const chat = new HyperliquidChat();
+    const chat = new Hyperchat();
     chat.supabase = mockSupabase;
 
     // Mock empty results
@@ -603,7 +603,7 @@ describe('HyperliquidChat - Module F: History loading with retry', () => {
   });
 
   test('F4: Successful load - should set messages and update UI', async () => {
-    const chat = new HyperliquidChat();
+    const chat = new Hyperchat();
     chat.supabase = mockSupabase;
 
     // Create spy for scrollToBottom
@@ -629,7 +629,7 @@ describe('HyperliquidChat - Module F: History loading with retry', () => {
   });
 
   test('F5: Failure with retry - should retry and succeed on third attempt', async () => {
-    const chat = new HyperliquidChat();
+    const chat = new Hyperchat();
     chat.supabase = mockSupabase;
 
     // Mock failures for first two attempts, success on third
@@ -655,7 +655,7 @@ describe('HyperliquidChat - Module F: History loading with retry', () => {
   });
 
   test('F6: Final failure - should show failure UI and throw error', async () => {
-    const chat = new HyperliquidChat();
+    const chat = new Hyperchat();
     chat.supabase = mockSupabase;
 
     // Mock failures for all attempts
@@ -684,8 +684,8 @@ describe('HyperliquidChat - Module F: History loading with retry', () => {
   });
 });
 
-describe('HyperliquidChat - Module G: Realtime subscription', () => {
-  let HyperliquidChat;
+describe('Hyperchat - Module G: Realtime subscription', () => {
+  let Hyperchat;
   let mockSupabase;
   let mockChannel;
 
@@ -714,8 +714,8 @@ describe('HyperliquidChat - Module G: Realtime subscription', () => {
       removeChannel: jest.fn()
     };
 
-    // Create a minimal version of HyperliquidChat for testing
-    HyperliquidChat = class {
+    // Create a minimal version of Hyperchat for testing
+    Hyperchat = class {
       constructor() {
         this.currentPair = 'ETH-USDC';
         this.currentMarket = 'Perps';
@@ -760,7 +760,7 @@ describe('HyperliquidChat - Module G: Realtime subscription', () => {
   });
 
   test('G1: Valid incoming broadcast - should append message, render, and scroll', () => {
-    const chat = new HyperliquidChat();
+    const chat = new Hyperchat();
 
     // Create spy for scrollToBottom
     const scrollToBottomSpy = jest.spyOn(chat, 'scrollToBottom');
@@ -794,7 +794,7 @@ describe('HyperliquidChat - Module G: Realtime subscription', () => {
   });
 
   test('G2: Ignore message from same address - should not append message', () => {
-    const chat = new HyperliquidChat();
+    const chat = new Hyperchat();
 
     // Create spy for scrollToBottom
     const scrollToBottomSpy = jest.spyOn(chat, 'scrollToBottom');
@@ -824,7 +824,7 @@ describe('HyperliquidChat - Module G: Realtime subscription', () => {
   });
 
   test('G3: Ignore message from different room - should not append message', () => {
-    const chat = new HyperliquidChat();
+    const chat = new Hyperchat();
 
     // Create spy for scrollToBottom
     const scrollToBottomSpy = jest.spyOn(chat, 'scrollToBottom');
@@ -854,7 +854,7 @@ describe('HyperliquidChat - Module G: Realtime subscription', () => {
   });
 
   test('G4: Channel setup - should create channel with correct parameters', () => {
-    const chat = new HyperliquidChat();
+    const chat = new Hyperchat();
 
     // Subscribe to broadcast
     const channel = chat.subscribeBroadcast();
@@ -869,7 +869,7 @@ describe('HyperliquidChat - Module G: Realtime subscription', () => {
   });
 });
 
-describe('HyperliquidChat - Module H: Sending messages', () => {
+describe('Hyperchat - Module H: Sending messages', () => {
   let chat;
   let alertSpy;
   let mockWakuClient;
@@ -886,7 +886,7 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
 
     alertSpy = jest.spyOn(window, 'alert').mockImplementation(() => {});
 
-    chat = new HyperliquidChat();
+    chat = new Hyperchat();
     chat.currentPair = 'ETH-USDC';
     chat.currentMarket = 'Perps';
     chat.walletAddress = '0x1234567890abcdef1234567890abcdef12345678';
@@ -943,7 +943,7 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
     expect(chat.signMessage).not.toHaveBeenCalled();
   });
 
-  test('H4: Successful path - should sign and send message via Waku', async () => {
+  test('H4: Successful path - should send message via Waku', async () => {
     const scrollSpy = jest.spyOn(chat, 'scrollToBottom');
     const input = document.getElementById('messageInput');
     input.value = 'gm, sers';
@@ -951,8 +951,7 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
     await chat.sendMessage();
 
     expect(mockWakuClient.setWalletInfo).toHaveBeenCalledWith(chat.walletAddress, '');
-    expect(chat.signMessage).toHaveBeenCalled();
-    expect(mockWakuClient.sendMessage).toHaveBeenCalledWith('gm, sers', 'mock-signature');
+    expect(mockWakuClient.sendMessage).toHaveBeenCalledWith('gm, sers');
     expect(chat.messages.length).toBe(1);
     expect(chat.messages[0].content).toBe('gm, sers');
     expect(input.value).toBe('');
@@ -975,23 +974,18 @@ describe('HyperliquidChat - Module H: Sending messages', () => {
     const input = document.getElementById('messageInput');
     input.value = longMessage;
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const mockTimestamp = 1700000000000;
-    jest.spyOn(Date, 'now').mockReturnValue(mockTimestamp);
 
     await chat.sendMessage();
 
-    const signedPayload = JSON.parse(chat.signMessage.mock.calls[0][0]);
-    expect(signedPayload.content.length).toBe(500);
-    expect(signedPayload.content).toBe('a'.repeat(500));
+    expect(mockWakuClient.sendMessage).toHaveBeenCalledWith('a'.repeat(500));
     expect(warnSpy).toHaveBeenCalledWith('Message truncated to 500 characters');
 
     warnSpy.mockRestore();
-    Date.now.mockRestore();
   });
 });
 
-describe('HyperliquidChat - Module I: Market monitoring', () => {
-  let HyperliquidChat;
+describe('Hyperchat - Module I: Market monitoring', () => {
+  let Hyperchat;
   let mockSupabase;
 
   beforeEach(() => {
@@ -1017,8 +1011,8 @@ describe('HyperliquidChat - Module I: Market monitoring', () => {
       })
     };
 
-    // Create a minimal version of HyperliquidChat for testing
-    HyperliquidChat = class {
+    // Create a minimal version of Hyperchat for testing
+    Hyperchat = class {
       constructor() {
         this.currentPair = 'ETH-USDC';
         this.currentMarket = 'Perps';
@@ -1106,7 +1100,7 @@ describe('HyperliquidChat - Module I: Market monitoring', () => {
   });
 
   test('I1: Room change - should update UI, remove channel, and reload', async () => {
-    const chat = new HyperliquidChat();
+    const chat = new Hyperchat();
 
     // Create spies
     const updateHeaderSpy = jest.spyOn(chat, 'updateChatHeader');
@@ -1175,7 +1169,7 @@ describe('HyperliquidChat - Module I: Market monitoring', () => {
   test('I2: No change - should not reload or resubscribe', () => {
     // Reset chrome.runtime.sendMessage mock
     chrome.runtime.sendMessage.mockClear();
-    const chat = new HyperliquidChat();
+    const chat = new Hyperchat();
 
     // Create spies
     const updateHeaderSpy = jest.spyOn(chat, 'updateChatHeader');
@@ -1207,7 +1201,7 @@ describe('HyperliquidChat - Module I: Market monitoring', () => {
   });
 
   test('I3: Header update - should update pair, market, and placeholder', () => {
-    const chat = new HyperliquidChat();
+    const chat = new Hyperchat();
     chat.currentPair = 'HYPE-USDC';
     chat.currentMarket = 'Spot';
 
@@ -1225,7 +1219,7 @@ describe('HyperliquidChat - Module I: Market monitoring', () => {
   });
 });
 
-describe('HyperliquidChat - Module J: Header & visibility helpers', () => {
+describe('Hyperchat - Module J: Header & visibility helpers', () => {
   let chat;
 
   beforeEach(() => {
@@ -1242,11 +1236,11 @@ describe('HyperliquidChat - Module J: Header & visibility helpers', () => {
           </div>
         </div>
       </div>
-      <div id="hyperliquid-chat-widget"></div>
+      <div id="hyperchat-widget"></div>
     `;
 
-    // Create a real instance of HyperliquidChat
-    chat = new HyperliquidChat();
+    // Create a real instance of Hyperchat
+    chat = new Hyperchat();
     chat.currentPair = 'ETH-USDC';
     chat.currentMarket = 'Perps';
   });
@@ -1306,7 +1300,7 @@ describe('HyperliquidChat - Module J: Header & visibility helpers', () => {
 
   test('J4: showChat - should create widget if not exists', () => {
     // Remove existing widget if any
-    const existingWidget = document.getElementById('hyperliquid-chat-widget');
+    const existingWidget = document.getElementById('hyperchat-widget');
     if (existingWidget) existingWidget.remove();
 
     // Create spy for createChatWidget
@@ -1329,7 +1323,7 @@ describe('HyperliquidChat - Module J: Header & visibility helpers', () => {
   });
 });
 
-describe('HyperliquidChat - Module K: Wallet Bridge wrappers', () => {
+describe('Hyperchat - Module K: Wallet Bridge wrappers', () => {
   let chat;
 
   beforeEach(() => {
@@ -1339,8 +1333,8 @@ describe('HyperliquidChat - Module K: Wallet Bridge wrappers', () => {
     // Mock window.postMessage
     window.postMessage = jest.fn();
 
-    // Create a real instance of HyperliquidChat
-    chat = new HyperliquidChat();
+    // Create a real instance of Hyperchat
+    chat = new Hyperchat();
     
     // Reset wallet state for testing
     chat.walletAddress = null;
@@ -1384,15 +1378,15 @@ describe('HyperliquidChat - Module K: Wallet Bridge wrappers', () => {
   });
 });
 
-describe('HyperliquidChat - Module L: Utilities', () => {
+describe('Hyperchat - Module L: Utilities', () => {
   let chat;
 
   beforeEach(() => {
     // Reset DOM
     document.body.innerHTML = '';
 
-    // Create a real instance of HyperliquidChat
-    chat = new HyperliquidChat();
+    // Create a real instance of Hyperchat
+    chat = new Hyperchat();
   });
 
   test('L1: formatAddress - should truncate address correctly', () => {
@@ -1443,7 +1437,7 @@ describe('HyperliquidChat - Module L: Utilities', () => {
   });
 });
 
-describe('HyperliquidChat - Module M: Wallet Connection', () => {
+describe('Hyperchat - Module M: Wallet Connection', () => {
   let chat;
   let alertSpy;
 
@@ -1451,7 +1445,7 @@ describe('HyperliquidChat - Module M: Wallet Connection', () => {
     document.body.innerHTML = '';
     alertSpy = jest.spyOn(window, 'alert').mockImplementation(() => {});
 
-    chat = new HyperliquidChat();
+    chat = new Hyperchat();
     chat.createChatWidget = jest.fn();
     chat.extensionAPI = null;
     chat.extensionAPI = null;

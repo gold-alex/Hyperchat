@@ -102,7 +102,7 @@ const addRuntimeListener = (api, handler) => {
   };
 };
 
-export class HyperliquidChat {
+export class Hyperchat {
   constructor(config = {}) {
     this.isVisible = false;
     this.currentPair = '';
@@ -127,7 +127,7 @@ export class HyperliquidChat {
   }
 
   async init() {
-    console.log('Initializing HyperliquidChat...');
+    console.log('Initializing Hyperchat...');
     this.detectMarketInfo();
     this.createChatWidget();
     this.setupMessageListener();
@@ -425,10 +425,7 @@ export class HyperliquidChat {
     try {
       this.wakuClient.setRoom(this.currentPair, this.currentMarket);
       this.wakuClient.setWalletInfo(this.walletAddress, this.selectedName);
-      const timestamp = Date.now();
-      const dataToSign = JSON.stringify({ timestamp, content });
-      const signature = await this.signMessage(dataToSign);
-      const optimistic = await this.wakuClient.sendMessage(content, signature);
+      const optimistic = await this.wakuClient.sendMessage(content);
       this.messages.push(optimistic);
       if (input) input.value = '';
       const container = document.getElementById('chatMessages');
@@ -649,7 +646,7 @@ export class HyperliquidChat {
       throw new Error('Wallet not connected');
     }
     const timestamp = Date.now();
-    const loginMsg = `HyperLiquidChat login ${timestamp}`;
+    const loginMsg = `Hyperchat login ${timestamp}`;
     const signature = await this.signMessage(loginMsg);
     const verified = await verifyMessage({
       address: this.walletAddress,

@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { HyperliquidChat } from '../src/hyperliquid-chat.js';
+import { Hyperchat } from '../src/hyperchat.js';
 
-describe('HyperliquidChat (Vitest) - minimal', () => {
+describe('Hyperchat (Vitest) - minimal', () => {
   let chat: any;
 
   beforeEach(() => {
     document.body.innerHTML = '';
-    chat = new HyperliquidChat({ backendPort: 3001 });
+    chat = new Hyperchat({ backendPort: 3001 });
     chat.currentPair = 'ETH-USDC';
     chat.currentMarket = 'Perps';
   });

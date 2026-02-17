@@ -1,7 +1,7 @@
 import { defineContentScript } from 'wxt/sandbox';
 import '../styles/content.css';
 import { browser } from 'wxt/browser';
-import { HyperliquidChat } from '../src/hyperliquid-chat.js';
+import { Hyperchat } from '../src/hyperchat.js';
 
 export default defineContentScript({
   matches: ['https://app.hyperliquid.xyz/trade*'],
@@ -10,12 +10,12 @@ export default defineContentScript({
     const WAKU_NODE_URI = env.VITE_WAKU_NODE_URI || 'localhost';
     const WAKU_NODE_PORT = Number(env.VITE_WAKU_NODE_PORT) || 443;
     const WAKU_NODE_PEER_ID = env.VITE_WAKU_NODE_PEER_ID || 'PEER_ID';
+    const GATEWAY_URL = env.VITE_LIGHTPUSH_GATEWAY_URL || '';
 
     let wakuClient: any;
-    let chatInstance: HyperliquidChat | null = null;
+    let chatInstance: Hyperchat | null = null;
 
     const getAssetUrl = (path: string) => {
-      if (browser.runtime?.getURL) return browser.runtime.getURL(path);
       if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) return chrome.runtime.getURL(path);
       return path;
     };
@@ -27,6 +27,7 @@ export default defineContentScript({
           wakuNodeURI: WAKU_NODE_URI,
           wakuNodePort: WAKU_NODE_PORT as any,
           wakuNodePeerId: WAKU_NODE_PEER_ID,
+          gatewayUrl: GATEWAY_URL,
           onMessageReceived: (message: any) => { if (chatInstance) chatInstance.handleNewMessage(message); },
           onHistoryLoaded: (messages: any[]) => { if (chatInstance) chatInstance.handleHistoryLoaded(messages); },
           onConnectionStatusChange: (connected: boolean) => { if (chatInstance) chatInstance.handleConnectionStatusChange(connected); },
@@ -47,13 +48,16 @@ export default defineContentScript({
     }
 
     function initializeChat() {
-      chatInstance = new HyperliquidChat({ extensionAPI: browser });
+      chatInstance = new Hyperchat({ extensionAPI: browser });
       chatInstance.wakuClient = wakuClient;
+      if (wakuClient?.setSiweSigner) {
+        wakuClient.setSiweSigner((message: string) => chatInstance!.signMessage(message));
+      }
       chatInstance.init();
     }
 
     function initializeChatInReadOnlyMode() {
-      chatInstance = new HyperliquidChat({ extensionAPI: browser });
+      chatInstance = new Hyperchat({ extensionAPI: browser });
       chatInstance.wakuClient = null; // Explicitly null to indicate read-only mode
       chatInstance.init();
     }
