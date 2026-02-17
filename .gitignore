@@ -138,3 +138,6 @@ temp/
 
 # Nwaku local DBs
 docker/nwaku*db/*
+
+notes
+openspec
