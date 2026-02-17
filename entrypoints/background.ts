@@ -4,7 +4,20 @@ import type { Message } from '../src/messages';
 
 export default defineBackground(() => {
   const hasSidePanel = () => (browser as any).sidePanel && typeof (browser as any).sidePanel.setPanelBehavior === 'function';
+  const SIDEPANEL_SYNC_PORT = 'sidepanel-sync';
+  const sidepanelPorts = new Set<any>();
+  const warnForwardFailure = (context: string, error: unknown) => {
+    console.warn(`[background] ${context} failed`, error);
+  };
   // Background service worker (migrated from background.js)
+  browser.runtime.onConnect.addListener((port: any) => {
+    if (port.name !== SIDEPANEL_SYNC_PORT) return;
+    sidepanelPorts.add(port);
+    port.onDisconnect.addListener(() => {
+      sidepanelPorts.delete(port);
+    });
+  });
+
   browser.runtime.onInstalled.addListener(async () => {
     console.log('Hyperliquid Chat extension installed');
     await browser.storage.local.set({ chatMode: 'sidepanel' });
@@ -56,7 +69,9 @@ export default defineBackground(() => {
     if (request.action === 'roomChange' || request.action === 'showChat') {
       const tabs = await browser.tabs.query({ url: '*://app.hyperliquid.xyz/*' });
       for (const t of tabs) {
-        await browser.tabs.sendMessage(t.id!, request).catch(() => {});
+        await browser.tabs.sendMessage(t.id!, request).catch((error) => {
+          warnForwardFailure(`${request.action} tab relay (tab ${t.id ?? 'unknown'})`, error);
+        });
       }
       if (sender && sender.tab && sender.tab.id && hasSidePanel()) {
         // @ts-ignore
@@ -69,7 +84,14 @@ export default defineBackground(() => {
       return { success: true };
     }
     if (request.action === 'syncSidepanel') {
-      await browser.runtime.sendMessage(request).catch(() => {});
+      for (const port of sidepanelPorts) {
+        try {
+          port.postMessage(request);
+        } catch (error) {
+          sidepanelPorts.delete(port);
+          warnForwardFailure('syncSidepanel sidepanel relay', error);
+        }
+      }
       return { success: true };
     }
     return undefined as any;
@@ -87,9 +109,13 @@ export default defineBackground(() => {
           // @ts-ignore
           (browser as any).sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(console.error);
         }
-        await browser.runtime.sendMessage({ action: 'closeSidePanel' } as Message).catch(() => {});
+        await browser.runtime.sendMessage({ action: 'closeSidePanel' } as Message).catch((error) => {
+          warnForwardFailure('closeSidePanel runtime relay', error);
+        });
         if (tab && tab.url && tab.url.includes('app.hyperliquid.xyz')) {
-          await browser.tabs.sendMessage(tab.id!, { action: 'showChat' } as Message).catch(() => {});
+          await browser.tabs.sendMessage(tab.id!, { action: 'showChat' } as Message).catch((error) => {
+            warnForwardFailure(`showChat relay from context menu (tab ${tab.id ?? 'unknown'})`, error);
+          });
         }
       } else {
         browser.contextMenus.update('toggleChatMode', { title: 'Switch to floating mode' });
@@ -105,10 +131,15 @@ export default defineBackground(() => {
         }
         const tabs = await browser.tabs.query({ url: '*://app.hyperliquid.xyz/*' });
         for (const hlTab of tabs) {
-          await browser.tabs.sendMessage(hlTab.id!, { action: 'hideChat' } as Message).catch(() => {});
+          await browser.tabs.sendMessage(hlTab.id!, { action: 'hideChat' } as Message).catch((error) => {
+            warnForwardFailure(`hideChat relay (tab ${hlTab.id ?? 'unknown'})`, error);
+          });
           if (hlTab.url && hlTab.url.includes('app.hyperliquid.xyz/trade') && (!tab || hlTab.id !== tab.id)) {
             try {
-              const response: any = await browser.tabs.sendMessage(hlTab.id!, { action: 'getCurrentRoom' } as Message).catch(() => null);
+              const response: any = await browser.tabs.sendMessage(hlTab.id!, { action: 'getCurrentRoom' } as Message).catch((error) => {
+                warnForwardFailure(`getCurrentRoom relay (tab ${hlTab.id ?? 'unknown'})`, error);
+                return null;
+              });
               const pair = response?.pair || 'UNKNOWN';
               const market = response?.market || 'Perps';
               if (hasSidePanel()) {

@@ -18,13 +18,20 @@ export const MSG = {
 
 export type MessageAction = typeof MSG[keyof typeof MSG];
 
+export type SyncSidepanelMessage = {
+  action: typeof MSG.SYNC_SIDEPANEL;
+  pair?: string;
+  market?: string;
+  messages?: unknown[];
+};
+
 export type Message =
   | { action: typeof MSG.GET_STORED; key: string }
   | { action: typeof MSG.SET_STORED; key: string; value: unknown }
   | { action: typeof MSG.OPEN_WIDGET; pair?: string; market?: string }
   | { action: typeof MSG.ROOM_CHANGE; pair: string; market: string }
   | { action: typeof MSG.SHOW_CHAT; pair?: string; market?: string }
-  | { action: typeof MSG.SYNC_SIDEPANEL; [key: string]: any }
+  | SyncSidepanelMessage
   | { action: typeof MSG.CLOSE_SIDEPANEL }
   | { action: typeof MSG.REQUEST_WALLET }
   | { action: typeof MSG.SEND_MESSAGE; content: string; selectedName?: string }
