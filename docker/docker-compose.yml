@@ -71,6 +71,24 @@ services:
       - --store=false
       - --staticnode=/ip4/${NWAKU_IP:-172.28.0.10}/tcp/60000/p2p/${PRIMARY_WAKU_PEER_ID:?Set PRIMARY_WAKU_PEER_ID in docker/.env}
 
+  lightpush-gateway:
+    build:
+      context: ..
+      dockerfile: docker/lightpush-gateway/Dockerfile
+    container_name: lightpush-gateway
+    restart: unless-stopped
+    depends_on:
+      - nwaku
+    networks:
+      waku_net:
+        ipv4_address: ${LP_GATEWAY_IP:-172.28.0.12}
+    ports:
+      - "${LP_GATEWAY_PORT:-8787}:8787"
+    env_file:
+      - .env
+    environment:
+      - LP_RPC_HTTP=${LP_RPC_HTTP:-http://nwaku:8645}
+
   sqlite:
     build:
       context: .
