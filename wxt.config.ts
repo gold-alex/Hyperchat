@@ -29,6 +29,7 @@ export default defineConfig({
           'chat-widget.js',
           'wallet-bridge.js',
           'lib/waku-chat-client.js',
+          'lib/noble-secp256k1.js',
           'lib/js-waku.min.js',
           'lib/protobufjs/minimal.js',
           'lib/protobuf-wrapper.js',
@@ -77,6 +78,7 @@ export default defineConfig({
       // Copy lib/ prebundled Waku/protobuf artifacts verbatim
       const libFiles = [
         'lib/waku-chat-client.js',
+        'lib/noble-secp256k1.js',
         'lib/js-waku.min.js',
         'lib/protobufjs/minimal.js',
         'lib/protobuf-wrapper.js',
@@ -92,4 +94,3 @@ export default defineConfig({
     },
   },
 });
-

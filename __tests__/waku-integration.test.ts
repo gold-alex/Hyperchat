@@ -31,6 +31,7 @@ describe('Waku Integration Tests', () => {
     wakuNodeURI: process.env.VITE_WAKU_NODE_URI || 'localhost',
     wakuNodePort: parseInt(process.env.VITE_WAKU_NODE_PORT || '8000'),
     wakuNodePeerId: process.env.VITE_WAKU_NODE_PEER_ID || '',
+    gatewayUrl: process.env.VITE_LIGHTPUSH_GATEWAY_URL || 'http://localhost:8787',
   };
 
   beforeAll(async () => {
@@ -138,14 +139,14 @@ describe('Waku Integration Tests', () => {
       if (!TEST_CONFIG.wakuNodePeerId) return;
       
       wakuClient.setRoom('BTC-USD', 'Perps');
-      expect(wakuClient.getContentTopic()).toBe('/hl-chat/1/BTC-USD_Perps/proto');
+      expect(wakuClient.getContentTopic()).toBe('/waku-auth-lite/1/BTC-USD_Perps/json');
     });
 
     it('should generate correct content topic for ETH-USD Spot', () => {
       if (!TEST_CONFIG.wakuNodePeerId) return;
       
       wakuClient.setRoom('ETH-USD', 'Spot');
-      expect(wakuClient.getContentTopic()).toBe('/hl-chat/1/ETH-USD_Spot/proto');
+      expect(wakuClient.getContentTopic()).toBe('/waku-auth-lite/1/ETH-USD_Spot/json');
     });
 
     it('should update content topic when room changes', () => {
@@ -158,7 +159,7 @@ describe('Waku Integration Tests', () => {
       wakuClient.setRoom('SOL-USD', 'Spot');
       expect(wakuClient.currentPair).toBe('SOL-USD');
       expect(wakuClient.currentMarket).toBe('Spot');
-      expect(wakuClient.getContentTopic()).toBe('/hl-chat/1/SOL-USD_Spot/proto');
+      expect(wakuClient.getContentTopic()).toBe('/waku-auth-lite/1/SOL-USD_Spot/json');
     });
   });
 
@@ -325,4 +326,3 @@ describe('Waku Integration Tests', () => {
     }, 30000);
   });
 });
-

@@ -98,7 +98,7 @@ function parseArgs() {
     pubsubTopics: [pubsub],
     shardInfo: { clusterId: cluster, shards: [shard] },
     networkConfig,
-    libp2p: { filterMultiaddrs: false },
+    libp2p: { filterMultiaddrs: false, hideWebSocketInfo: true },
     // Explicitly configure service peers to avoid discovery delays in isolated clusters
     store: { peers: [remoteMaStr] },
     filter: { peers: [remoteMaStr] },

@@ -1,11 +1,13 @@
 // Migrated from sidepanel.js
 import { browser } from 'wxt/browser';
+import type { Message } from '../../src/messages';
 console.log('Sidepanel script loaded');
 
 // Get URL parameters for current trading pair/market
 const params = new URLSearchParams(location.search);
 const initialPair = params.get('pair') || 'UNKNOWN';
 const initialMarket = params.get('market') || 'Perps';
+const SIDEPANEL_SYNC_PORT = 'sidepanel-sync';
 
 // State
 let currentPair = initialPair;
@@ -30,10 +32,14 @@ async function initializeWaku() {
         ? parseInt(env.VITE_WAKU_NODE_PORT, 10)
         : (env.VITE_WAKU_NODE_PORT || 443),
       wakuNodePeerId: env.VITE_WAKU_NODE_PEER_ID || 'PEER_ID',
+      gatewayUrl: env.VITE_LIGHTPUSH_GATEWAY_URL || '',
       onMessageReceived: (message: any) => { handleNewMessage(message); },
       onHistoryLoaded: (loadedMessages: any[]) => { handleHistoryLoaded(loadedMessages); },
       onConnectionStatusChange: (connected: boolean) => { handleConnectionStatusChange(connected); },
     });
+    if (wakuClient?.setSiweSigner) {
+      wakuClient.setSiweSigner(signMessageViaContent);
+    }
     const success = await wakuClient.initialize();
     console.log(success ? 'Waku client initialized successfully' : 'Failed to initialize Waku client');
     return !!success;
@@ -87,6 +93,27 @@ async function restoreWalletConnection() {
   } catch (error) { console.error('Failed to restore wallet connection in side panel:', error); }
 }
 
+function applySyncSidepanel(request: Message) {
+  if (request.action !== 'syncSidepanel') return;
+  if (request.pair && request.pair !== 'UNKNOWN') {
+    currentPair = request.pair;
+    currentMarket = request.market || 'Perps';
+    messages = request.messages || [];
+    if (!hasLoadedInitialData) {
+      hasLoadedInitialData = true;
+      createChatUI();
+      setupEventListeners();
+      loadChatHistory();
+      subscribeBroadcast();
+    } else {
+      updateChatHeader();
+      updateMessagesUI();
+      scrollToBottom();
+      subscribeBroadcast();
+    }
+  }
+}
+
 async function initializeChat() {
   const root = document.getElementById('sidepanel-root')!;
   root.innerHTML = `
@@ -110,17 +137,13 @@ async function initializeChat() {
     if (wakuClient) { loadChatHistory(); subscribeBroadcast(); }
   }
 
-  browser.runtime.onMessage.addListener((request: any) => {
+  browser.runtime.onMessage.addListener((request: Message) => {
     if (request.action === 'roomChange') {
       currentPair = request.pair; currentMarket = request.market; updateChatHeader(); loadChatHistory(); subscribeBroadcast();
     } else if (request.action === 'closeSidePanel') {
       window.close();
     } else if (request.action === 'syncSidepanel') {
-      if (request.pair && request.pair !== 'UNKNOWN') {
-        currentPair = request.pair; currentMarket = request.market || 'Perps'; messages = request.messages || [];
-        if (!hasLoadedInitialData) { hasLoadedInitialData = true; createChatUI(); setupEventListeners(); loadChatHistory(); subscribeBroadcast(); }
-        else { updateChatHeader(); updateMessagesUI(); scrollToBottom(); subscribeBroadcast(); }
-      }
+      applySyncSidepanel(request);
     }
   });
 
@@ -256,20 +279,27 @@ async function sendMessage() {
     try {
       wakuClient.setRoom(currentPair, currentMarket);
       wakuClient.setWalletInfo(walletAddress, selectedName);
-      const [tab]: any = await browser.tabs.query({ active: true, currentWindow: true });
-      if (!tab || !tab.url || !tab.url.includes('app.hyperliquid.xyz')) { alert('Please navigate to app.hyperliquid.xyz/trade to send messages'); return; }
-      const timestamp = Date.now();
-      const dataToSign = JSON.stringify({ timestamp, content });
-      try { await browser.scripting.executeScript({ target: { tabId: tab.id! }, func: () => void 0 }); } catch {}
-      const signRes: any = await browser.tabs.sendMessage(tab.id!, { action: 'signMessage', message: dataToSign });
-      if (signRes?.error) throw new Error(signRes.error);
-      const signature = signRes?.signature || '';
-      const optimistic = await wakuClient.sendMessage(content, signature);
+      const optimistic = await wakuClient.sendMessage(content);
       messages.push(optimistic);
       if (input) input.value = '';
       updateMessagesUI(); scrollToBottom();
     } catch (error) { console.error('Failed to send message:', error); alert('Failed to send message. Please try again.'); }
   }
+}
+
+async function signMessageViaContent(message: string) {
+  const [tab]: any = await browser.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.url || !tab.url.includes('app.hyperliquid.xyz')) {
+    throw new Error('Please navigate to app.hyperliquid.xyz/trade to sign');
+  }
+  try {
+    await browser.scripting.executeScript({ target: { tabId: tab.id! }, func: () => void 0 });
+  } catch {}
+  const signRes: any = await browser.tabs.sendMessage(tab.id!, { action: 'signMessage', message });
+  if (signRes?.error) throw new Error(signRes.error);
+  const signature = signRes?.signature || '';
+  if (!signature) throw new Error('Signature missing');
+  return signature;
 }
 
 function updateMessagesUI(customHTML: string | null = null) {
@@ -301,6 +331,11 @@ function formatAddress(address: string) { return `${address.slice(0, 6)}...${add
 function formatTime(timestamp: number) { return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 function escapeHtml(text: string) { const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }
 function scrollToBottom() { if (!autoScroll) return; const messagesContainer = document.getElementById('chatMessages'); if (messagesContainer) (messagesContainer as HTMLElement).scrollTop = (messagesContainer as HTMLElement).scrollHeight; }
+
+const syncSidepanelPort = browser.runtime.connect({ name: SIDEPANEL_SYNC_PORT });
+syncSidepanelPort.onMessage.addListener((request: Message) => {
+  applySyncSidepanel(request);
+});
 
 browser.runtime.onMessage.addListener((request: any, _sender: any, _sendResponse: any) => {
   if (request.action === 'walletConnected') {
