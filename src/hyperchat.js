@@ -121,6 +121,7 @@ export class Hyperchat {
     this.autoScroll = true;
     this.extensionAPI = resolveExtensionAPI(config.extensionAPI);
     this.realtimeChannel = null;
+    this.hlNamesApiKey = typeof config.hlNamesApiKey === 'string' ? config.hlNamesApiKey.trim() : '';
 
     if (!window.DISABLE_WALLET_BRIDGE) {
       this.injectWalletBridge();
@@ -620,7 +621,8 @@ export class Hyperchat {
 
   async fetchHLNames(address) {
     try {
-      const resp = await fetch(`https://api.hlnames.xyz/utils/names_owner/${address}`, { headers: { 'X-API-Key': 'CPEPKMI-HUSUX6I-SE2DHEA-YYWFG5Y' } });
+      const headers = this.hlNamesApiKey ? { 'X-API-Key': this.hlNamesApiKey } : undefined;
+      const resp = await fetch(`https://api.hlnames.xyz/utils/names_owner/${address}`, headers ? { headers } : undefined);
       if (!resp.ok) return [];
       const data = await resp.json();
       if (!Array.isArray(data)) return [];

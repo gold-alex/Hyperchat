@@ -11,6 +11,7 @@ export default defineContentScript({
     const WAKU_NODE_PORT = Number(env.VITE_WAKU_NODE_PORT) || 443;
     const WAKU_NODE_PEER_ID = env.VITE_WAKU_NODE_PEER_ID || 'PEER_ID';
     const GATEWAY_URL = env.VITE_LIGHTPUSH_GATEWAY_URL || '';
+    const HLNAMES_API_KEY = env.VITE_HLNAMES_API_KEY || '';
 
     let wakuClient: any;
     let chatInstance: Hyperchat | null = null;
@@ -48,7 +49,7 @@ export default defineContentScript({
     }
 
     function initializeChat() {
-      chatInstance = new Hyperchat({ extensionAPI: browser });
+      chatInstance = new Hyperchat({ extensionAPI: browser, hlNamesApiKey: HLNAMES_API_KEY });
       chatInstance.wakuClient = wakuClient;
       if (wakuClient?.setSiweSigner) {
         wakuClient.setSiweSigner((message: string) => chatInstance!.signMessage(message));
@@ -57,7 +58,7 @@ export default defineContentScript({
     }
 
     function initializeChatInReadOnlyMode() {
-      chatInstance = new Hyperchat({ extensionAPI: browser });
+      chatInstance = new Hyperchat({ extensionAPI: browser, hlNamesApiKey: HLNAMES_API_KEY });
       chatInstance.wakuClient = null; // Explicitly null to indicate read-only mode
       chatInstance.init();
     }

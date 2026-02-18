@@ -1550,3 +1550,45 @@ describe('Hyperchat - Module M: Wallet Connection', () => {
     expect(alertSpy).toHaveBeenCalledWith('Signature verification failed. Check console.');
   });
 });
+
+describe('Hyperchat - Module N: HL names API key behavior', () => {
+  let originalFetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    jest.restoreAllMocks();
+  });
+
+  test('N1: fetchHLNames - omits X-API-Key header when key is not configured', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ name: 'alpha' }],
+    });
+    const chat = new Hyperchat();
+
+    const names = await chat.fetchHLNames('0xabc');
+
+    expect(names).toEqual(['alpha']);
+    expect(global.fetch).toHaveBeenCalledWith('https://api.hlnames.xyz/utils/names_owner/0xabc', undefined);
+  });
+
+  test('N2: fetchHLNames - uses configured X-API-Key header when provided', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ name: 'beta' }],
+    });
+    const chat = new Hyperchat({ hlNamesApiKey: 'test-client-key' });
+
+    const names = await chat.fetchHLNames('0xdef');
+
+    expect(names).toEqual(['beta']);
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://api.hlnames.xyz/utils/names_owner/0xdef',
+      { headers: { 'X-API-Key': 'test-client-key' } },
+    );
+  });
+});
