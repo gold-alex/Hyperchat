@@ -22,6 +22,7 @@ export interface GatewayConfig {
   allowedPubsubTopics?: string[];
   expectedDomain?: string;
   expectedChainId?: number;
+  allowInsecureSiweEnv?: boolean;
   maxSiweClockSkewMs?: number;
   minSessionTtlMs?: number;
   maxSessionTtlMs?: number;
@@ -191,6 +192,20 @@ export function createInMemoryNonceStore(): NonceStore {
 
 export function createGatewayServer(config: GatewayConfig) {
   if (!config.rpcUrl) throw new Error('rpcUrl is required');
+  const allowInsecureSiweEnv = config.allowInsecureSiweEnv === true;
+  const expectedDomain =
+    typeof config.expectedDomain === 'string' && config.expectedDomain.trim().length > 0
+      ? config.expectedDomain.trim()
+      : undefined;
+  const expectedChainId =
+    typeof config.expectedChainId === 'number' && Number.isFinite(config.expectedChainId)
+      ? config.expectedChainId
+      : undefined;
+  if (!allowInsecureSiweEnv && (!expectedDomain || expectedChainId === undefined)) {
+    throw new Error(
+      'Strict SIWE environment requires expectedDomain and expectedChainId (set LP_DOMAIN and LP_CHAIN_ID, or set allowInsecureSiweEnv for local development only)',
+    );
+  }
   const store = config.sessionStore ?? createInMemorySessionStore();
   const nonceStore = config.nonceStore ?? createInMemoryNonceStore();
   const bodyLimit = config.bodyLimit ?? '512kb';
@@ -292,7 +307,7 @@ export function createGatewayServer(config: GatewayConfig) {
       }
       const auth = verifySiweAuthorization({ siweMessage, siweSignature });
       const { siwe } = auth;
-      if (config.expectedDomain && siwe.domain.toLowerCase() !== config.expectedDomain.toLowerCase()) {
+      if (expectedDomain && siwe.domain.toLowerCase() !== expectedDomain.toLowerCase()) {
         return rejectWithTelemetry({
           res,
           endpoint: '/session',
@@ -301,7 +316,7 @@ export function createGatewayServer(config: GatewayConfig) {
           error: 'SIWE domain mismatch',
         });
       }
-      if (config.expectedChainId && siwe.chainId !== config.expectedChainId) {
+      if (expectedChainId !== undefined && siwe.chainId !== expectedChainId) {
         return rejectWithTelemetry({
           res,
           endpoint: '/session',

@@ -122,6 +122,86 @@ describe('gateway server', () => {
     expect(rpcCallCount).toBe(1);
   });
 
+  it('fails fast when expected domain/chain config is missing in strict mode', async () => {
+    expect(() => createGatewayServer({ rpcUrl })).toThrow(/expectedDomain and expectedChainId/);
+    expect(() => createGatewayServer({ rpcUrl, expectedDomain: gatewayDomain })).toThrow(/expectedDomain and expectedChainId/);
+    expect(() => createGatewayServer({ rpcUrl, expectedChainId: 1 })).toThrow(/expectedDomain and expectedChainId/);
+
+    const app = createGatewayServer({
+      rpcUrl,
+      allowInsecureSiweEnv: true,
+    });
+    const agent = supertest(app);
+    const wallet = Wallet.createRandom();
+    const session = generateSessionKeypair();
+    const issuedAt = new Date().toISOString();
+    const expirationTime = new Date(Date.parse(issuedAt) + sessionTtlMs).toISOString();
+    const siweMessage = buildSiweMessage({
+      address: wallet.address,
+      sessionPubKeyHex: session.publicKeyHex,
+      nonce: createNonce(),
+      issuedAt,
+      expirationTime,
+      domain: 'local.dev',
+      resources: boundResources,
+    });
+    const siweSignature = await wallet.signMessage(siweMessage);
+    await agent.post('/session').send({ siweMessage, siweSignature }).expect(200);
+  });
+
+  it('rejects session when SIWE domain mismatches expected domain', async () => {
+    const app = createGatewayServer({
+      rpcUrl,
+      expectedDomain: gatewayDomain,
+      expectedChainId: 1,
+    });
+    const agent = supertest(app);
+    const wallet = Wallet.createRandom();
+    const session = generateSessionKeypair();
+    const issuedAt = new Date().toISOString();
+    const expirationTime = new Date(Date.parse(issuedAt) + sessionTtlMs).toISOString();
+    const siweMessage = buildSiweMessage({
+      address: wallet.address,
+      sessionPubKeyHex: session.publicKeyHex,
+      nonce: createNonce(),
+      issuedAt,
+      expirationTime,
+      domain: 'wrong.gateway.local',
+      resources: boundResources,
+    });
+    const siweSignature = await wallet.signMessage(siweMessage);
+
+    const response = await agent.post('/session').send({ siweMessage, siweSignature }).expect(400);
+    expect(response.body?.error).toBe('SIWE domain mismatch');
+  });
+
+  it('rejects session when SIWE chainId mismatches expected chainId', async () => {
+    const app = createGatewayServer({
+      rpcUrl,
+      expectedDomain: gatewayDomain,
+      expectedChainId: 1,
+    });
+    const agent = supertest(app);
+    const wallet = Wallet.createRandom();
+    const session = generateSessionKeypair();
+    const issuedAt = new Date().toISOString();
+    const expirationTime = new Date(Date.parse(issuedAt) + sessionTtlMs).toISOString();
+    const siweMessage = buildSiweMessage({
+      address: wallet.address,
+      sessionPubKeyHex: session.publicKeyHex,
+      nonce: createNonce(),
+      issuedAt,
+      expirationTime,
+      domain: gatewayDomain,
+      chainId: 42161,
+      resources: boundResources,
+    });
+    const siweSignature = await wallet.signMessage(siweMessage);
+
+    const response = await agent.post('/session').send({ siweMessage, siweSignature }).expect(400);
+    expect(response.body?.error).toBe('SIWE chainId mismatch');
+  });
+
   it('accepts payload when decoded size is exactly at configured max', async () => {
     const wallet = Wallet.createRandom();
     const session = generateSessionKeypair();

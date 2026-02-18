@@ -60,6 +60,24 @@ const denylist = parseList(process.env.LP_DENYLIST);
 
 const maxClockSkewMs = parseNumber(process.env.LP_MAX_CLOCK_SKEW_MS ?? process.env.LP_TIME_SKEW_MS);
 const maxSiweClockSkewMs = parseNumber(process.env.LP_MAX_SIWE_SKEW_MS ?? process.env.LP_TIME_SKEW_MS);
+const allowInsecureSiweEnv = parseBoolean(process.env.LP_ALLOW_INSECURE_SIWE_ENV) === true;
+const expectedDomain = process.env.LP_DOMAIN ?? process.env.LP_EXPECTED_DOMAIN;
+const expectedChainId = parseNumber(process.env.LP_CHAIN_ID);
+
+if (!allowInsecureSiweEnv) {
+  if (!expectedDomain) {
+    console.error('Missing required env var: LP_DOMAIN (or LP_EXPECTED_DOMAIN)');
+    process.exit(1);
+  }
+  if (expectedChainId === undefined) {
+    console.error('Missing required env var: LP_CHAIN_ID');
+    process.exit(1);
+  }
+} else {
+  console.warn(
+    '[SECURITY] LP_ALLOW_INSECURE_SIWE_ENV=true: domain/chain SIWE enforcement may be relaxed. Use only for local development.',
+  );
+}
 
 const config = {
   rpcUrl,
@@ -70,8 +88,9 @@ const config = {
   lightpushConnectTimeoutMs: parseNumber(process.env.LP_WAKU_CONNECT_TIMEOUT_MS),
   allowedTopics,
   allowedPubsubTopics,
-  expectedDomain: process.env.LP_DOMAIN ?? process.env.LP_EXPECTED_DOMAIN,
-  expectedChainId: parseNumber(process.env.LP_CHAIN_ID),
+  expectedDomain,
+  expectedChainId,
+  allowInsecureSiweEnv,
   maxClockSkewMs,
   maxSiweClockSkewMs,
   minSessionTtlMs: parseNumber(process.env.LP_SESSION_TTL_MIN_MS),
@@ -96,7 +115,8 @@ app.listen(port, () => {
   console.log(`  port: ${port}`);
   console.log(`  rpcUrl: ${rpcUrl}`);
   if (config.expectedDomain) console.log(`  expectedDomain: ${config.expectedDomain}`);
-  if (config.expectedChainId) console.log(`  expectedChainId: ${config.expectedChainId}`);
+  if (config.expectedChainId !== undefined) console.log(`  expectedChainId: ${config.expectedChainId}`);
+  if (config.allowInsecureSiweEnv) console.log('  allowInsecureSiweEnv: true');
   if (config.publishTransport) console.log(`  publishTransport: ${config.publishTransport}`);
   if (config.lightpushWsUrl) console.log(`  lightpushWsUrl: ${config.lightpushWsUrl}`);
   if (config.lightpushPeerId) console.log(`  lightpushPeerId: ${config.lightpushPeerId}`);
