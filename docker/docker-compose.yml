@@ -10,7 +10,7 @@ services:
         ipv4_address: ${NWAKU_IP:-172.28.0.10}
     ports:
       - "${WAKU_WS_PORT:-8000}:8000"   # WebSocket (exposed in test mode)
-      - "${WAKU_REST_PORT:-8645}:8645" # REST API (exposed in test mode)
+      - "${WAKU_REST_BIND_HOST:-127.0.0.1}:${WAKU_REST_PORT:-8645}:8645" # REST API (localhost-only by default)
     volumes:
       - ${WAKU_DB_PATH:-./nwaku_db}:/var/db
     environment:
@@ -27,7 +27,7 @@ services:
       - --rest=true
       - --rest-address=0.0.0.0
       - --rest-port=8645
-      - --rest-admin=true
+      - --rest-admin=${WAKU_REST_ADMIN:-false}
       - --websocket-support=true
       - --websocket-port=8000
       - --cluster-id=999
@@ -48,7 +48,7 @@ services:
         ipv4_address: ${NWAKU_RELAY_IP:-172.28.0.11}
     ports:
       - "${WAKU_RELAY_WS_PORT:-8100}:8100"
-      - "${WAKU_RELAY_REST_PORT:-8745}:8745"
+      - "${WAKU_RELAY_REST_BIND_HOST:-127.0.0.1}:${WAKU_RELAY_REST_PORT:-8745}:8745"
     volumes:
       - ${WAKU_RELAY_DB_PATH:-./nwaku_relay_db}:/var/db
     environment:
@@ -63,7 +63,7 @@ services:
       - --rest=true
       - --rest-address=0.0.0.0
       - --rest-port=8745
-      - --rest-admin=true
+      - --rest-admin=${WAKU_RELAY_REST_ADMIN:-false}
       - --websocket-support=true
       - --websocket-port=8100
       - --cluster-id=999
