@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import {
   createNonce,
   encodeEnvelopePayload,
@@ -141,6 +142,43 @@ describe('EnvelopeReceiverFilter', () => {
     };
     const result = await filter.evaluateMessage(message);
     expect(result.accepted).toBe(true);
+  });
+
+  it('derives SHA-256 fallback message id when messageId is missing', async () => {
+    const filter = new EnvelopeReceiverFilter({ messageTtlMs: 1000 });
+    const timestamp = Date.now();
+    const message = {
+      address: '0x1234',
+      timestamp,
+      content: 'fallback-id-test',
+      signature: '0xabcdef',
+    };
+    const raw = `${message.address}-${message.timestamp}-${message.content}-${message.signature}`;
+    const expectedMessageId = createHash('sha256').update(raw, 'utf8').digest('hex');
+
+    const result = await filter.evaluateMessage(message);
+    expect(result.accepted).toBe(true);
+
+    const [trackedId] = Array.from(filter.seenIds.keys());
+    expect(trackedId).toMatch(/^[a-f0-9]{64}$/);
+    expect(trackedId).toBe(expectedMessageId);
+  });
+
+  it('deduplicates direct messages with missing messageId using fallback derivation', async () => {
+    const filter = new EnvelopeReceiverFilter({ messageTtlMs: 10_000 });
+    const timestamp = Date.now();
+    const message = {
+      address: '0xabcd',
+      timestamp,
+      content: 'dedupe-fallback-test',
+      signature: '0x012345',
+    };
+
+    const first = await filter.evaluateMessage(message);
+    const second = await filter.evaluateMessage(message);
+    expect(first.accepted).toBe(true);
+    expect(second.accepted).toBe(false);
+    expect(second.reason).toBe('duplicate');
   });
 
   it('rejects invalid signature in evaluateMessage when auth-lite envelope fields are provided', async () => {
