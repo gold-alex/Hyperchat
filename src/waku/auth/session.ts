@@ -61,6 +61,16 @@ function decodeUtf8(bytes: Uint8Array) {
   throw new Error('TextDecoder not available');
 }
 
+function normalizeSenderAddress(senderAddress: string) {
+  return String(senderAddress ?? '')
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeHex(value: string) {
+  return String(value ?? '').replace(/^0x/i, '').toLowerCase();
+}
+
 function base64Encode(bytes: Uint8Array) {
   if (typeof Buffer !== 'undefined') {
     return Buffer.from(bytes).toString('base64');
@@ -216,6 +226,23 @@ export function verifySiweAuthorization(params: {
 export function canonicalizeEnvelope<T>(input: {
   metadata: EnvelopeMetadata;
   message: T;
+  senderAddress: string;
+  sessionPubKey: string;
+  timestampMs: number;
+}) {
+  return JSON.stringify({
+    contentTopic: input.metadata.contentTopic,
+    pubsubTopic: input.metadata.pubsubTopic,
+    message: input.message,
+    senderAddress: normalizeSenderAddress(input.senderAddress),
+    timestampMs: input.timestampMs,
+    sessionPubKey: input.sessionPubKey,
+  });
+}
+
+function canonicalizeLegacyEnvelope<T>(input: {
+  metadata: EnvelopeMetadata;
+  message: T;
   sessionPubKey: string;
   timestampMs: number;
 }) {
@@ -231,11 +258,22 @@ export function canonicalizeEnvelope<T>(input: {
 export function hashEnvelopeContent<T>(input: {
   metadata: EnvelopeMetadata;
   message: T;
+  senderAddress: string;
   sessionPubKey: string;
   timestampMs: number;
 }) {
   const canonical = canonicalizeEnvelope(input);
-  return sha256(new TextEncoder().encode(canonical));
+  return sha256(encodeUtf8(canonical));
+}
+
+function hashLegacyEnvelopeContent<T>(input: {
+  metadata: EnvelopeMetadata;
+  message: T;
+  sessionPubKey: string;
+  timestampMs: number;
+}) {
+  const canonical = canonicalizeLegacyEnvelope(input);
+  return sha256(encodeUtf8(canonical));
 }
 
 export function signEnvelope<T>(params: {
@@ -250,7 +288,7 @@ export function signEnvelope<T>(params: {
   const privKeyBytes = hexToBytes(sessionPrivKeyHex);
   const sessionPubKey = sessionPubKeyHex || bytesToHex(getPublicKey(privKeyBytes, true));
   const ts = timestampMs ?? Date.now();
-  const hash = hashEnvelopeContent({ metadata, message, sessionPubKey, timestampMs: ts });
+  const hash = hashEnvelopeContent({ metadata, message, senderAddress, sessionPubKey, timestampMs: ts });
   const signature = sign(hash, privKeyBytes);
   const signatureHex =
     typeof signature === 'string'
@@ -273,18 +311,34 @@ export function signEnvelope<T>(params: {
 export function verifyEnvelope<T>(params: {
   metadata: EnvelopeMetadata;
   envelope: SignedEnvelope<T>;
+  allowLegacyUnsignedSenderAddress?: boolean;
 }) {
-  const { metadata, envelope } = params;
+  const { metadata, envelope, allowLegacyUnsignedSenderAddress = false } = params;
   const hash = hashEnvelopeContent({
+    metadata,
+    message: envelope.message,
+    senderAddress: envelope.senderAddress,
+    sessionPubKey: envelope.sessionPubKey,
+    timestampMs: envelope.timestampMs,
+  });
+  const normalizedMessageId = normalizeHex(envelope.messageId);
+  if (normalizeHex(bytesToHex(hash)) === normalizedMessageId && verify(envelope.signature, hash, envelope.sessionPubKey)) {
+    return true;
+  }
+  if (!allowLegacyUnsignedSenderAddress) {
+    return false;
+  }
+
+  const legacyHash = hashLegacyEnvelopeContent({
     metadata,
     message: envelope.message,
     sessionPubKey: envelope.sessionPubKey,
     timestampMs: envelope.timestampMs,
   });
-  if (bytesToHex(hash) !== envelope.messageId) {
+  if (normalizeHex(bytesToHex(legacyHash)) !== normalizedMessageId) {
     return false;
   }
-  return verify(envelope.signature, hash, envelope.sessionPubKey);
+  return verify(envelope.signature, legacyHash, envelope.sessionPubKey);
 }
 
 export function encodeEnvelopePayload<T>(envelope: SignedEnvelope<T>) {

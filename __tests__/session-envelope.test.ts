@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Wallet } from 'ethers';
+import { sha256 } from '@noble/hashes/sha256';
+import { etc, sign } from '@noble/secp256k1';
 import {
   buildSiweMessage,
   createNonce,
@@ -15,6 +17,41 @@ import {
 } from '../src/waku/auth/session';
 
 describe('Session + envelope helpers', () => {
+  const { bytesToHex, hexToBytes } = etc;
+
+  function signLegacyEnvelope<T>(params: {
+    metadata: EnvelopeMetadata;
+    message: T;
+    senderAddress: string;
+    sessionPrivKeyHex: string;
+    sessionPubKeyHex: string;
+    timestampMs: number;
+  }) {
+    const canonical = JSON.stringify({
+      contentTopic: params.metadata.contentTopic,
+      pubsubTopic: params.metadata.pubsubTopic,
+      message: params.message,
+      timestampMs: params.timestampMs,
+      sessionPubKey: params.sessionPubKeyHex,
+    });
+    const hash = sha256(new TextEncoder().encode(canonical));
+    const signature = sign(hash, hexToBytes(params.sessionPrivKeyHex));
+    const signatureHex =
+      typeof signature === 'string'
+        ? signature
+        : signature instanceof Uint8Array
+        ? bytesToHex(signature)
+        : signature.toCompactHex();
+    return {
+      message: params.message,
+      senderAddress: params.senderAddress,
+      sessionPubKey: params.sessionPubKeyHex,
+      timestampMs: params.timestampMs,
+      messageId: bytesToHex(hash),
+      signature: signatureHex,
+    };
+  }
+
   it('creates SIWE message that embeds session pubkey and verifies signature', async () => {
     const { publicKeyHex } = generateSessionKeypair();
     const wallet = Wallet.createRandom();
@@ -63,6 +100,68 @@ describe('Session + envelope helpers', () => {
 
     const tampered = { ...envelope, message: { ...message, text: 'tampered' } };
     expect(verifyEnvelope({ metadata, envelope: tampered })).toBe(false);
+
+    const tamperedSender = { ...envelope, senderAddress: Wallet.createRandom().address };
+    expect(verifyEnvelope({ metadata, envelope: tamperedSender })).toBe(false);
+  });
+
+  it('normalizes sender address casing for deterministic messageId/signature', () => {
+    const { privateKeyHex, publicKeyHex } = generateSessionKeypair();
+    const metadata: EnvelopeMetadata = {
+      contentTopic: '/waku-auth-lite/1/chat/json',
+      pubsubTopic: '/waku/2/rs/999/0',
+    };
+    const wallet = Wallet.createRandom();
+    const message = { text: 'Hello', timestamp: 1736533685 };
+    const timestampMs = 1736533685000;
+
+    const lower = signEnvelope({
+      metadata,
+      message,
+      senderAddress: wallet.address.toLowerCase(),
+      sessionPrivKeyHex: privateKeyHex,
+      sessionPubKeyHex: publicKeyHex,
+      timestampMs,
+    });
+    const checksum = signEnvelope({
+      metadata,
+      message,
+      senderAddress: wallet.address,
+      sessionPrivKeyHex: privateKeyHex,
+      sessionPubKeyHex: publicKeyHex,
+      timestampMs,
+    });
+
+    expect(lower.messageId).toBe(checksum.messageId);
+    expect(lower.signature).toBe(checksum.signature);
+    expect(verifyEnvelope({ metadata, envelope: lower })).toBe(true);
+    expect(verifyEnvelope({ metadata, envelope: checksum })).toBe(true);
+  });
+
+  it('rejects legacy unsigned-sender envelopes by default and allows via explicit compatibility mode', () => {
+    const { privateKeyHex, publicKeyHex } = generateSessionKeypair();
+    const metadata: EnvelopeMetadata = {
+      contentTopic: '/waku-auth-lite/1/chat/json',
+      pubsubTopic: '/waku/2/rs/999/0',
+    };
+    const senderWallet = Wallet.createRandom();
+    const legacyEnvelope = signLegacyEnvelope({
+      metadata,
+      message: { text: 'legacy', timestamp: 1736533685 },
+      senderAddress: senderWallet.address,
+      sessionPrivKeyHex: privateKeyHex,
+      sessionPubKeyHex: publicKeyHex,
+      timestampMs: 1736533685000,
+    });
+
+    expect(verifyEnvelope({ metadata, envelope: legacyEnvelope })).toBe(false);
+    expect(
+      verifyEnvelope({
+        metadata,
+        envelope: legacyEnvelope,
+        allowLegacyUnsignedSenderAddress: true,
+      }),
+    ).toBe(true);
   });
 
   it('encodes and decodes envelope payloads symmetrically', () => {

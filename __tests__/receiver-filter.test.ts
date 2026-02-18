@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha256';
+import { etc, sign } from '@noble/secp256k1';
 import {
   createNonce,
   encodeEnvelopePayload,
@@ -15,6 +17,7 @@ describe('EnvelopeReceiverFilter', () => {
     contentTopic: '/waku-auth-lite/1/chat/json',
     pubsubTopic: '/waku/2/rs/999/0',
   };
+  const { bytesToHex, hexToBytes } = etc;
 
   function buildEnvelope(overrides: Partial<Record<'timestampMs' | 'messageId', number>> = {}) {
     const session = generateSessionKeypair();
@@ -42,6 +45,37 @@ describe('EnvelopeReceiverFilter', () => {
     return `${hex.slice(0, index)}${replacement}${hex.slice(index + 1)}`;
   }
 
+  function buildLegacyEnvelope() {
+    const session = generateSessionKeypair();
+    const wallet = Wallet.createRandom();
+    const timestampMs = Date.now();
+    const message = { text: 'hello', timestamp: timestampMs };
+    const canonical = JSON.stringify({
+      contentTopic: metadata.contentTopic,
+      pubsubTopic: metadata.pubsubTopic,
+      message,
+      timestampMs,
+      sessionPubKey: session.publicKeyHex,
+    });
+    const hash = sha256(new TextEncoder().encode(canonical));
+    const signature = sign(hash, hexToBytes(session.privateKeyHex));
+    const signatureHex =
+      typeof signature === 'string'
+        ? signature
+        : signature instanceof Uint8Array
+        ? bytesToHex(signature)
+        : signature.toCompactHex();
+
+    return {
+      message,
+      senderAddress: wallet.address,
+      sessionPubKey: session.publicKeyHex,
+      timestampMs,
+      messageId: bytesToHex(hash),
+      signature: signatureHex,
+    };
+  }
+
   it('accepts valid envelopes', async () => {
     const filter = new EnvelopeReceiverFilter();
     const { envelope } = buildEnvelope();
@@ -63,6 +97,16 @@ describe('EnvelopeReceiverFilter', () => {
     const filter = new EnvelopeReceiverFilter();
     const { envelope } = buildEnvelope();
     envelope.signature = mutateHex(envelope.signature);
+    const payload = encodeEnvelopePayload(envelope);
+    const result = await filter.evaluateEnvelope(payload, metadata);
+    expect(result.accepted).toBe(false);
+    expect(result.reason).toBe('invalid_envelope_signature');
+  });
+
+  it('rejects sender-tampered envelopes when signature was created for a different sender', async () => {
+    const filter = new EnvelopeReceiverFilter();
+    const { envelope } = buildEnvelope();
+    envelope.senderAddress = Wallet.createRandom().address;
     const payload = encodeEnvelopePayload(envelope);
     const result = await filter.evaluateEnvelope(payload, metadata);
     expect(result.accepted).toBe(false);
@@ -198,5 +242,21 @@ describe('EnvelopeReceiverFilter', () => {
     const result = await filter.evaluateMessage(message);
     expect(result.accepted).toBe(false);
     expect(result.reason).toBe('invalid_envelope_signature');
+  });
+
+  it('rejects legacy unsigned-sender envelopes by default and only accepts with compatibility mode', async () => {
+    const legacyEnvelope = buildLegacyEnvelope();
+    const payload = encodeEnvelopePayload(legacyEnvelope);
+
+    const strictFilter = new EnvelopeReceiverFilter();
+    const strictResult = await strictFilter.evaluateEnvelope(payload, metadata);
+    expect(strictResult.accepted).toBe(false);
+    expect(strictResult.reason).toBe('invalid_envelope_signature');
+
+    const compatibilityFilter = new EnvelopeReceiverFilter({
+      allowLegacyUnsignedSenderAddress: true,
+    });
+    const compatibilityResult = await compatibilityFilter.evaluateEnvelope(payload, metadata);
+    expect(compatibilityResult.accepted).toBe(true);
   });
 });

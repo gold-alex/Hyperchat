@@ -3,6 +3,8 @@ import { Wallet } from 'ethers';
 import supertest from 'supertest';
 import { createServer as createHttpServer } from 'node:http';
 import { AddressInfo } from 'node:net';
+import { sha256 } from '@noble/hashes/sha256';
+import { etc, sign } from '@noble/secp256k1';
 
 import {
   buildSiweMessage,
@@ -36,6 +38,39 @@ const parseJsonLogEvents = (calls: unknown[][]) =>
       }
     })
     .filter((event): event is Record<string, unknown> => Boolean(event));
+const { bytesToHex, hexToBytes } = etc;
+
+const signLegacyEnvelope = (params: {
+  message: Record<string, unknown>;
+  senderAddress: string;
+  sessionPrivKeyHex: string;
+  sessionPubKeyHex: string;
+  timestampMs: number;
+}) => {
+  const canonical = JSON.stringify({
+    contentTopic: metadata.contentTopic,
+    pubsubTopic: metadata.pubsubTopic,
+    message: params.message,
+    timestampMs: params.timestampMs,
+    sessionPubKey: params.sessionPubKeyHex,
+  });
+  const hash = sha256(new TextEncoder().encode(canonical));
+  const signature = sign(hash, hexToBytes(params.sessionPrivKeyHex));
+  const signatureHex =
+    typeof signature === 'string'
+      ? signature
+      : signature instanceof Uint8Array
+      ? bytesToHex(signature)
+      : signature.toCompactHex();
+  return {
+    message: params.message,
+    senderAddress: params.senderAddress,
+    sessionPubKey: params.sessionPubKeyHex,
+    timestampMs: params.timestampMs,
+    messageId: bytesToHex(hash),
+    signature: signatureHex,
+  };
+};
 
 const buildBoundSiwe = (params: { address: string; sessionPubKeyHex: string }) => {
   const issuedAt = new Date().toISOString();
@@ -369,6 +404,107 @@ describe('gateway server', () => {
       .send({ sessionId: body.sessionId, contentTopic: metadata.contentTopic, pubsubTopic: metadata.pubsubTopic, payloadBase64 })
       .expect(400);
     expect(lastRpcBody).toBeUndefined();
+  });
+
+  it('rejects sender-tampered envelopes even when attacker creates a matching session key record', async () => {
+    const app = createGatewayServer({
+      rpcUrl,
+      allowedTopics: [metadata.contentTopic],
+      allowedPubsubTopics: [metadata.pubsubTopic],
+      expectedDomain: gatewayDomain,
+      expectedChainId: 1,
+    });
+    const agent = supertest(app);
+    const originalSender = Wallet.createRandom();
+    const attacker = Wallet.createRandom();
+    const session = generateSessionKeypair();
+    const siweMessage = buildBoundSiwe({
+      address: attacker.address,
+      sessionPubKeyHex: session.publicKeyHex,
+    });
+    const siweSignature = await attacker.signMessage(siweMessage);
+    const { body } = await agent.post('/session').send({ siweMessage, siweSignature }).expect(200);
+
+    const timestampMs = Date.now();
+    const envelope = signEnvelope({
+      metadata,
+      message: { text: 'spoof-attempt', timestamp: timestampMs },
+      senderAddress: originalSender.address,
+      sessionPrivKeyHex: session.privateKeyHex,
+      sessionPubKeyHex: session.publicKeyHex,
+      timestampMs,
+    });
+    envelope.senderAddress = attacker.address;
+    const payloadBase64 = encodeEnvelopePayload(envelope);
+
+    const response = await agent
+      .post('/message')
+      .send({
+        sessionId: body.sessionId,
+        contentTopic: metadata.contentTopic,
+        pubsubTopic: metadata.pubsubTopic,
+        payloadBase64,
+      })
+      .expect(400);
+
+    expect(response.body?.error).toBe('Invalid envelope signature');
+    expect(lastRpcBody).toBeUndefined();
+  });
+
+  it('rejects legacy unsigned-sender envelopes by default and allows them only with explicit compatibility mode', async () => {
+    const wallet = Wallet.createRandom();
+    const session = generateSessionKeypair();
+    const siweMessage = buildBoundSiwe({ address: wallet.address, sessionPubKeyHex: session.publicKeyHex });
+    const siweSignature = await wallet.signMessage(siweMessage);
+    const timestampMs = Date.now();
+    const legacyEnvelope = signLegacyEnvelope({
+      message: { text: 'legacy-envelope', timestamp: timestampMs },
+      senderAddress: wallet.address,
+      sessionPrivKeyHex: session.privateKeyHex,
+      sessionPubKeyHex: session.publicKeyHex,
+      timestampMs,
+    });
+    const payloadBase64 = encodeEnvelopePayload(legacyEnvelope);
+
+    const strictApp = createGatewayServer({
+      rpcUrl,
+      allowedTopics: [metadata.contentTopic],
+      allowedPubsubTopics: [metadata.pubsubTopic],
+      expectedDomain: gatewayDomain,
+      expectedChainId: 1,
+    });
+    const strictAgent = supertest(strictApp);
+    const strictSession = await strictAgent.post('/session').send({ siweMessage, siweSignature }).expect(200);
+    const strictResponse = await strictAgent
+      .post('/message')
+      .send({
+        sessionId: strictSession.body.sessionId,
+        contentTopic: metadata.contentTopic,
+        pubsubTopic: metadata.pubsubTopic,
+        payloadBase64,
+      })
+      .expect(400);
+    expect(strictResponse.body?.error).toBe('Invalid envelope signature');
+
+    const compatibilityApp = createGatewayServer({
+      rpcUrl,
+      allowedTopics: [metadata.contentTopic],
+      allowedPubsubTopics: [metadata.pubsubTopic],
+      expectedDomain: gatewayDomain,
+      expectedChainId: 1,
+      allowLegacyUnsignedSenderAddress: true,
+    });
+    const compatibilityAgent = supertest(compatibilityApp);
+    const compatibilitySession = await compatibilityAgent.post('/session').send({ siweMessage, siweSignature }).expect(200);
+    await compatibilityAgent
+      .post('/message')
+      .send({
+        sessionId: compatibilitySession.body.sessionId,
+        contentTopic: metadata.contentTopic,
+        pubsubTopic: metadata.pubsubTopic,
+        payloadBase64,
+      })
+      .expect(200);
   });
 
   it('rejects messages outside the allowed clock skew', async () => {

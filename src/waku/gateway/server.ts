@@ -23,6 +23,7 @@ export interface GatewayConfig {
   expectedDomain?: string;
   expectedChainId?: number;
   allowInsecureSiweEnv?: boolean;
+  allowLegacyUnsignedSenderAddress?: boolean;
   maxSiweClockSkewMs?: number;
   minSessionTtlMs?: number;
   maxSessionTtlMs?: number;
@@ -193,6 +194,7 @@ export function createInMemoryNonceStore(): NonceStore {
 export function createGatewayServer(config: GatewayConfig) {
   if (!config.rpcUrl) throw new Error('rpcUrl is required');
   const allowInsecureSiweEnv = config.allowInsecureSiweEnv === true;
+  const allowLegacyUnsignedSenderAddress = config.allowLegacyUnsignedSenderAddress === true;
   const expectedDomain =
     typeof config.expectedDomain === 'string' && config.expectedDomain.trim().length > 0
       ? config.expectedDomain.trim()
@@ -521,7 +523,7 @@ export function createGatewayServer(config: GatewayConfig) {
           error: 'Sender mismatch',
         });
       }
-      if (!verifyEnvelope({ metadata, envelope })) {
+      if (!verifyEnvelope({ metadata, envelope, allowLegacyUnsignedSenderAddress })) {
         return rejectWithTelemetry({
           res,
           endpoint: '/message',
