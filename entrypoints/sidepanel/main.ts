@@ -31,6 +31,7 @@ let hasLoadedInitialData = false;
 async function initializeWaku() {
   try {
     const env = (import.meta as any).env ?? {};
+    const useLegacyProto = env.VITE_WAKU_USE_LEGACY_PROTO === 'true';
     const wakuModule: any = await import(chrome.runtime.getURL('lib/waku-chat-client.js'));
     wakuClient = new wakuModule.WakuChatClient({
       wakuNodeURI: env.VITE_WAKU_NODE_URI || 'localhost',
@@ -39,6 +40,7 @@ async function initializeWaku() {
         : (env.VITE_WAKU_NODE_PORT || 443),
       wakuNodePeerId: env.VITE_WAKU_NODE_PEER_ID || 'PEER_ID',
       gatewayUrl: env.VITE_LIGHTPUSH_GATEWAY_URL || '',
+      useLegacyProto,
       onMessageReceived: (message: any) => { handleNewMessage(message); },
       onHistoryLoaded: (loadedMessages: any[]) => { handleHistoryLoaded(loadedMessages); },
       onConnectionStatusChange: (connected: boolean) => { handleConnectionStatusChange(connected); },

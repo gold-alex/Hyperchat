@@ -1,4 +1,5 @@
 import { webcrypto } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { Wallet } from 'ethers';
 import {
   buildSiweMessage,
@@ -54,12 +55,19 @@ function parseGatewayBaseUrl(value: string) {
   return url.href.replace(/\/+$/, '');
 }
 
-function getConfig(): SmokeConfig {
-  const gatewayBaseUrl = parseGatewayBaseUrl(
-    process.env.LP_SMOKE_GATEWAY_URL ??
-      process.env.VITE_LIGHTPUSH_GATEWAY_URL ??
-      'http://localhost:8787',
-  );
+function resolveGatewayBaseUrl() {
+  const configuredValue = process.env.LP_SMOKE_GATEWAY_URL ?? process.env.VITE_LIGHTPUSH_GATEWAY_URL;
+  if (!configuredValue || !configuredValue.trim()) {
+    throw new StageError({
+      stage: '/config',
+      message: 'Missing gateway URL. Set LP_SMOKE_GATEWAY_URL (or VITE_LIGHTPUSH_GATEWAY_URL) before running gateway:smoke.',
+    });
+  }
+  return parseGatewayBaseUrl(configuredValue);
+}
+
+export function getConfig(): SmokeConfig {
+  const gatewayBaseUrl = resolveGatewayBaseUrl();
 
   const parsedGateway = new URL(gatewayBaseUrl);
   const domain = process.env.LP_SMOKE_DOMAIN ?? process.env.LP_DOMAIN ?? parsedGateway.hostname;
@@ -241,13 +249,21 @@ async function main() {
   console.log('Smoke test passed.');
 }
 
-main().catch((error) => {
-  if (error instanceof StageError) {
-    const status = typeof error.status === 'number' ? ` status=${error.status}` : '';
-    const detail = error.detail ? ` body=${error.detail}` : '';
-    console.error(`[FAIL] ${error.stage}${status}: ${error.message}${detail}`);
-  } else {
-    console.error(`[FAIL] unexpected: ${(error as Error).message}`);
-  }
-  process.exitCode = 1;
-});
+const isMainModule = (() => {
+  const scriptPath = process.argv[1];
+  if (!scriptPath) return false;
+  return import.meta.url === pathToFileURL(scriptPath).href;
+})();
+
+if (isMainModule) {
+  main().catch((error) => {
+    if (error instanceof StageError) {
+      const status = typeof error.status === 'number' ? ` status=${error.status}` : '';
+      const detail = error.detail ? ` body=${error.detail}` : '';
+      console.error(`[FAIL] ${error.stage}${status}: ${error.message}${detail}`);
+    } else {
+      console.error(`[FAIL] unexpected: ${(error as Error).message}`);
+    }
+    process.exitCode = 1;
+  });
+}

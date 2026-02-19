@@ -11,6 +11,7 @@ export default defineContentScript({
     const WAKU_NODE_PORT = Number(env.VITE_WAKU_NODE_PORT) || 443;
     const WAKU_NODE_PEER_ID = env.VITE_WAKU_NODE_PEER_ID || 'PEER_ID';
     const GATEWAY_URL = env.VITE_LIGHTPUSH_GATEWAY_URL || '';
+    const USE_LEGACY_PROTO = env.VITE_WAKU_USE_LEGACY_PROTO === 'true';
     const HLNAMES_API_KEY = env.VITE_HLNAMES_API_KEY || '';
 
     let wakuClient: any;
@@ -29,6 +30,7 @@ export default defineContentScript({
           wakuNodePort: WAKU_NODE_PORT as any,
           wakuNodePeerId: WAKU_NODE_PEER_ID,
           gatewayUrl: GATEWAY_URL,
+          useLegacyProto: USE_LEGACY_PROTO,
           onMessageReceived: (message: any) => { if (chatInstance) chatInstance.handleNewMessage(message); },
           onHistoryLoaded: (messages: any[]) => { if (chatInstance) chatInstance.handleHistoryLoaded(messages); },
           onConnectionStatusChange: (connected: boolean) => { if (chatInstance) chatInstance.handleConnectionStatusChange(connected); },
