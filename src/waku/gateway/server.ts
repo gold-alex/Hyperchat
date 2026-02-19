@@ -33,6 +33,11 @@ export interface GatewayConfig {
   maxMessagePayloadBytes?: number;
   maxClockSkewMs?: number;
   sessionStore?: SessionStore;
+  sessionStoreMaxEntries?: number;
+  nonceStoreMaxEntries?: number;
+  rateLimitMaxEntries?: number;
+  messageDeduperMaxEntries?: number;
+  balanceCacheMaxEntries?: number;
   rateLimit?: number;
   rateLimitWindowMs?: number;
   messageIdTtlMs?: number;
@@ -45,12 +50,12 @@ export interface GatewayConfig {
 
 export interface SessionStore {
   get(id: string): SessionRecord | undefined;
-  set(id: string, value: SessionRecord): void;
+  set(id: string, value: SessionRecord): boolean;
   delete(id: string): void;
 }
 
 export interface NonceStore {
-  consume(nonce: string, expiresAtMs: number): boolean;
+  consume(nonce: string, expiresAtMs: number): 'consumed' | 'reused' | 'saturated';
 }
 
 const DEFAULT_SKEW_MS = 5 * 60 * 1000;
@@ -58,12 +63,19 @@ const DEFAULT_RATE_LIMIT = 5;
 const DEFAULT_RATE_WINDOW_MS = 30 * 1000;
 const DEFAULT_MESSAGE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_BALANCE_CACHE_MS = 2 * 60 * 1000;
+const DEFAULT_SESSION_STORE_MAX_ENTRIES = 5_000;
+const DEFAULT_NONCE_STORE_MAX_ENTRIES = 10_000;
+const DEFAULT_RATE_LIMITER_MAX_ENTRIES = 20_000;
+const DEFAULT_MESSAGE_DEDUPER_MAX_ENTRIES = 20_000;
+const DEFAULT_BALANCE_CACHE_MAX_ENTRIES = 10_000;
 const DEFAULT_SIWE_SKEW_MS = 5 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MIN_MS = 15 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MAX_MS = 60 * 60 * 1000;
 const DEFAULT_MAX_MESSAGE_PAYLOAD_BYTES = 32 * 1024;
 type GatewayEndpoint = '/session' | '/message';
 type PublishTransport = 'lightpush' | 'rpc' | 'rpc-fallback' | 'unknown';
+type StoreName = 'session' | 'nonce' | 'rate_limiter' | 'message_dedupe' | 'balance_cache';
+type StoreEvictionReason = 'expired' | 'capacity';
 
 const REJECT_REASON = {
   MISSING_SIWE_FIELDS: 'missing_siwe_fields',
@@ -75,6 +87,8 @@ const REJECT_REASON = {
   SIWE_NONCE_MISSING: 'siwe_nonce_missing',
   SIWE_NONCE_EXPIRED: 'siwe_nonce_expired',
   SIWE_NONCE_REUSED: 'siwe_nonce_reused',
+  NONCE_STORE_SATURATED: 'nonce_store_saturated',
+  SESSION_STORE_SATURATED: 'session_store_saturated',
   SIWE_TOPIC_BINDING_INVALID: 'siwe_topic_binding_invalid',
   SIWE_VALIDATION_FAILED: 'siwe_validation_failed',
   MISSING_REQUIRED_FIELDS: 'missing_required_fields',
@@ -97,8 +111,16 @@ const REJECT_REASON = {
 
 type RejectReason = (typeof REJECT_REASON)[keyof typeof REJECT_REASON];
 
+function inferSaturatedStore(reason: RejectReason): StoreName | undefined {
+  if (reason === REJECT_REASON.NONCE_STORE_SATURATED) return 'nonce';
+  if (reason === REJECT_REASON.SESSION_STORE_SATURATED) return 'session';
+  return undefined;
+}
+
 function createGatewayMetricsRegistry() {
   const rejectCounters = new Map<string, number>();
+  const storeSaturationCounters = new Map<string, number>();
+  const storeEvictionCounters = new Map<string, number>();
   const publishCounters = {
     success: 0,
     failure: 0,
@@ -110,6 +132,32 @@ function createGatewayMetricsRegistry() {
     },
     incrementPublish(outcome: 'success' | 'failure') {
       publishCounters[outcome] += 1;
+    },
+    incrementStoreSaturation(store: StoreName, endpoint: GatewayEndpoint) {
+      const key = `${store}\u0000${endpoint}`;
+      storeSaturationCounters.set(key, (storeSaturationCounters.get(key) ?? 0) + 1);
+      console.warn(
+        JSON.stringify({
+          event: 'gateway.store_pressure',
+          kind: 'saturation',
+          store,
+          endpoint,
+        }),
+      );
+    },
+    incrementStoreEviction(store: StoreName, reason: StoreEvictionReason, count = 1) {
+      if (count <= 0) return;
+      const key = `${store}\u0000${reason}`;
+      storeEvictionCounters.set(key, (storeEvictionCounters.get(key) ?? 0) + count);
+      console.info(
+        JSON.stringify({
+          event: 'gateway.store_pressure',
+          kind: 'eviction',
+          store,
+          reason,
+          count,
+        }),
+      );
     },
     toPrometheusText() {
       const lines = [
@@ -126,6 +174,22 @@ function createGatewayMetricsRegistry() {
       lines.push('# TYPE gateway_publish_total counter');
       lines.push(`gateway_publish_total{outcome="success"} ${publishCounters.success}`);
       lines.push(`gateway_publish_total{outcome="failure"} ${publishCounters.failure}`);
+      lines.push('# HELP gateway_store_saturation_total Total store saturation events grouped by store and endpoint.');
+      lines.push('# TYPE gateway_store_saturation_total counter');
+      for (const [key, count] of [...storeSaturationCounters.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+        const [store, endpoint] = key.split('\u0000');
+        lines.push(
+          `gateway_store_saturation_total{store="${escapeMetricLabel(store)}",endpoint="${escapeMetricLabel(endpoint)}"} ${count}`,
+        );
+      }
+      lines.push('# HELP gateway_store_eviction_total Total bounded-store evictions grouped by store and reason.');
+      lines.push('# TYPE gateway_store_eviction_total counter');
+      for (const [key, count] of [...storeEvictionCounters.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+        const [store, reason] = key.split('\u0000');
+        lines.push(
+          `gateway_store_eviction_total{store="${escapeMetricLabel(store)}",reason="${escapeMetricLabel(reason)}"} ${count}`,
+        );
+      }
       return `${lines.join('\n')}\n`;
     },
   };
@@ -159,33 +223,84 @@ function inferPublishTransport(result: unknown, fallback: PublishTransport): Pub
   return fallback;
 }
 
-export function createInMemorySessionStore(): SessionStore {
+export function createInMemorySessionStore(options?: {
+  maxEntries?: number;
+  onEviction?: (reason: StoreEvictionReason, count?: number) => void;
+}): SessionStore {
+  const maxEntries = options?.maxEntries ?? DEFAULT_SESSION_STORE_MAX_ENTRIES;
+  const onEviction = options?.onEviction;
   const map = new Map<string, SessionRecord>();
+  const cleanupExpired = () => {
+    const now = Date.now();
+    let removed = 0;
+    for (const [id, record] of map.entries()) {
+      if (record.expiresAt && now > Date.parse(record.expiresAt)) {
+        map.delete(id);
+        removed += 1;
+      }
+    }
+    if (removed > 0) {
+      onEviction?.('expired', removed);
+    }
+  };
   return {
-    get: (id) => map.get(id),
-    set: (id, value) => map.set(id, value),
+    get: (id) => {
+      const record = map.get(id);
+      if (!record) return undefined;
+      if (record.expiresAt && Date.now() > Date.parse(record.expiresAt)) {
+        map.delete(id);
+        onEviction?.('expired', 1);
+        return undefined;
+      }
+      return record;
+    },
+    set: (id, value) => {
+      cleanupExpired();
+      if (!map.has(id) && map.size >= maxEntries) {
+        return false;
+      }
+      map.set(id, value);
+      return true;
+    },
     delete: (id) => {
       map.delete(id);
     },
   };
 }
 
-export function createInMemoryNonceStore(): NonceStore {
+export function createInMemoryNonceStore(options?: {
+  maxEntries?: number;
+  onEviction?: (reason: StoreEvictionReason, count?: number) => void;
+}): NonceStore {
+  const maxEntries = options?.maxEntries ?? DEFAULT_NONCE_STORE_MAX_ENTRIES;
+  const onEviction = options?.onEviction;
   const nonces = new Map<string, number>();
+  const cleanupExpired = () => {
+    const now = Date.now();
+    let removed = 0;
+    for (const [key, exp] of nonces.entries()) {
+      if (exp <= now) {
+        nonces.delete(key);
+        removed += 1;
+      }
+    }
+    if (removed > 0) {
+      onEviction?.('expired', removed);
+    }
+  };
   return {
     consume(nonce, expiresAtMs) {
+      cleanupExpired();
       const now = Date.now();
       const existing = nonces.get(nonce);
       if (existing && existing > now) {
-        return false;
+        return 'reused';
+      }
+      if (!existing && nonces.size >= maxEntries) {
+        return 'saturated';
       }
       nonces.set(nonce, expiresAtMs);
-      if (nonces.size > 1000) {
-        for (const [key, exp] of nonces.entries()) {
-          if (exp <= now) nonces.delete(key);
-        }
-      }
-      return true;
+      return 'consumed';
     },
   };
 }
@@ -206,8 +321,19 @@ export function createGatewayServer(config: GatewayConfig) {
       'Strict SIWE environment requires expectedDomain and expectedChainId (set LP_DOMAIN and LP_CHAIN_ID, or set allowInsecureSiweEnv for local development only)',
     );
   }
-  const store = config.sessionStore ?? createInMemorySessionStore();
-  const nonceStore = config.nonceStore ?? createInMemoryNonceStore();
+  const metrics = createGatewayMetricsRegistry();
+  const store =
+    config.sessionStore ??
+    createInMemorySessionStore({
+      maxEntries: config.sessionStoreMaxEntries ?? DEFAULT_SESSION_STORE_MAX_ENTRIES,
+      onEviction: (reason, count) => metrics.incrementStoreEviction('session', reason, count),
+    });
+  const nonceStore =
+    config.nonceStore ??
+    createInMemoryNonceStore({
+      maxEntries: config.nonceStoreMaxEntries ?? DEFAULT_NONCE_STORE_MAX_ENTRIES,
+      onEviction: (reason, count) => metrics.incrementStoreEviction('nonce', reason, count),
+    });
   const bodyLimit = config.bodyLimit ?? '512kb';
   const skewMs = config.maxClockSkewMs ?? DEFAULT_SKEW_MS;
   const siweSkewMs = config.maxSiweClockSkewMs ?? DEFAULT_SIWE_SKEW_MS;
@@ -219,11 +345,17 @@ export function createGatewayServer(config: GatewayConfig) {
   const rateLimiter = createRateLimiter({
     maxEvents: config.rateLimit ?? DEFAULT_RATE_LIMIT,
     windowMs: config.rateLimitWindowMs ?? DEFAULT_RATE_WINDOW_MS,
+    maxEntries: config.rateLimitMaxEntries ?? DEFAULT_RATE_LIMITER_MAX_ENTRIES,
+    onEviction: (reason, count) => metrics.incrementStoreEviction('rate_limiter', reason, count),
   });
-  const deduper = createMessageDeduper(config.messageIdTtlMs ?? DEFAULT_MESSAGE_TTL_MS);
+  const deduper = createMessageDeduper(config.messageIdTtlMs ?? DEFAULT_MESSAGE_TTL_MS, {
+    maxEntries: config.messageDeduperMaxEntries ?? DEFAULT_MESSAGE_DEDUPER_MAX_ENTRIES,
+    onEviction: (reason, count) => metrics.incrementStoreEviction('message_dedupe', reason, count),
+  });
   const balanceChecker = createBalanceChecker({
     minBalanceWei: config.minBalanceWei,
     cacheTtlMs: config.balanceCacheTtlMs ?? DEFAULT_BALANCE_CACHE_MS,
+    maxEntries: config.balanceCacheMaxEntries ?? DEFAULT_BALANCE_CACHE_MAX_ENTRIES,
     provider:
       config.balanceProvider ??
       (config.minBalanceWei
@@ -231,11 +363,11 @@ export function createGatewayServer(config: GatewayConfig) {
         : undefined),
     allowlist: config.allowlist,
     denylist: config.denylist,
+    onEviction: (reason, count) => metrics.incrementStoreEviction('balance_cache', reason, count),
   });
   const publishToWaku = createMessagePublisher(config);
   const defaultPublishTransport: PublishTransport =
     config.publishTransport === 'rpc' ? 'rpc' : config.lightpushPeerId ? 'lightpush' : 'rpc';
-  const metrics = createGatewayMetricsRegistry();
   const app = express();
   app.use(express.json({ limit: bodyLimit }));
 
@@ -248,6 +380,10 @@ export function createGatewayServer(config: GatewayConfig) {
     extra?: Record<string, unknown>;
   }) => {
     metrics.incrementReject(params.endpoint, params.reason);
+    const saturatedStore = inferSaturatedStore(params.reason);
+    if (saturatedStore) {
+      metrics.incrementStoreSaturation(saturatedStore, params.endpoint);
+    }
     console.warn(
       JSON.stringify({
         event: 'gateway.reject',
@@ -375,7 +511,17 @@ export function createGatewayServer(config: GatewayConfig) {
           error: 'SIWE nonce expired',
         });
       }
-      if (!nonceStore.consume(siwe.nonce, nonceExpiryMs)) {
+      const nonceConsumeResult = nonceStore.consume(siwe.nonce, nonceExpiryMs);
+      if (nonceConsumeResult === 'saturated') {
+        return rejectWithTelemetry({
+          res,
+          endpoint: '/session',
+          status: 503,
+          reason: REJECT_REASON.NONCE_STORE_SATURATED,
+          error: 'Nonce admission store saturated',
+        });
+      }
+      if (nonceConsumeResult === 'reused') {
         return rejectWithTelemetry({
           res,
           endpoint: '/session',
@@ -412,7 +558,15 @@ export function createGatewayServer(config: GatewayConfig) {
         expiresAt: new Date(expirationMs).toISOString(),
       };
       const sessionId = deriveSessionId({ siweMessage, siweSignature });
-      store.set(sessionId, record);
+      if (!store.set(sessionId, record)) {
+        return rejectWithTelemetry({
+          res,
+          endpoint: '/session',
+          status: 503,
+          reason: REJECT_REASON.SESSION_STORE_SATURATED,
+          error: 'Session admission store saturated',
+        });
+      }
       res.json({ sessionId, address: auth.address, sessionPubKey: auth.sessionPubKeyHex, expiresAt: record.expiresAt });
     } catch (err) {
       const error = getErrorMessage(err);
@@ -831,13 +985,40 @@ function parseShardFromPubsubTopic(pubsubTopic: string) {
   return Number(match[1]);
 }
 
-function createRateLimiter(options: { maxEvents: number; windowMs: number }) {
+function createRateLimiter(options: {
+  maxEvents: number;
+  windowMs: number;
+  maxEntries: number;
+  onEviction?: (reason: StoreEvictionReason, count?: number) => void;
+}) {
   const buckets = new Map<string, { windowStart: number; count: number }>();
+  const cleanupExpired = (now: number) => {
+    let removed = 0;
+    for (const [key, entry] of buckets.entries()) {
+      if (now - entry.windowStart >= options.windowMs) {
+        buckets.delete(key);
+        removed += 1;
+      }
+    }
+    if (removed > 0) {
+      options.onEviction?.('expired', removed);
+    }
+  };
   return {
     consume(key: string) {
       const now = Date.now();
+      cleanupExpired(now);
       const entry = buckets.get(key);
       if (!entry || now - entry.windowStart >= options.windowMs) {
+        if (!entry && buckets.size >= options.maxEntries) {
+          const overflow = buckets.size - options.maxEntries + 1;
+          for (let i = 0; i < overflow; i += 1) {
+            const oldest = buckets.keys().next().value;
+            if (!oldest) break;
+            buckets.delete(oldest);
+          }
+          options.onEviction?.('capacity', overflow);
+        }
         buckets.set(key, { windowStart: now, count: 1 });
         return true;
       }
@@ -845,29 +1026,51 @@ function createRateLimiter(options: { maxEvents: number; windowMs: number }) {
         return false;
       }
       entry.count += 1;
+      buckets.delete(key);
+      buckets.set(key, entry);
       return true;
     },
   };
 }
 
-function createMessageDeduper(ttlMs: number) {
+function createMessageDeduper(
+  ttlMs: number,
+  options: {
+    maxEntries: number;
+    onEviction?: (reason: StoreEvictionReason, count?: number) => void;
+  },
+) {
   const seen = new Map<string, number>();
+  const cleanupExpired = (now: number) => {
+    let removed = 0;
+    for (const [id, ts] of seen.entries()) {
+      if (now - ts >= ttlMs) {
+        seen.delete(id);
+        removed += 1;
+      }
+    }
+    if (removed > 0) {
+      options.onEviction?.('expired', removed);
+    }
+  };
   return {
     mark(messageId: string) {
       const now = Date.now();
+      cleanupExpired(now);
       const existing = seen.get(messageId);
       if (existing && now - existing < ttlMs) {
         return false;
       }
-      seen.set(messageId, now);
-      // lightweight cleanup occasionally
-      if (seen.size > 1000) {
-        for (const [id, ts] of seen.entries()) {
-          if (now - ts >= ttlMs) {
-            seen.delete(id);
-          }
+      if (!existing && seen.size >= options.maxEntries) {
+        const overflow = seen.size - options.maxEntries + 1;
+        for (let i = 0; i < overflow; i += 1) {
+          const oldest = seen.keys().next().value;
+          if (!oldest) break;
+          seen.delete(oldest);
         }
+        options.onEviction?.('capacity', overflow);
       }
+      seen.set(messageId, now);
       return true;
     },
   };
@@ -876,15 +1079,18 @@ function createMessageDeduper(ttlMs: number) {
 function createBalanceChecker(options: {
   minBalanceWei?: string | number | bigint;
   cacheTtlMs?: number;
+  maxEntries?: number;
   provider?: (address: string) => Promise<bigint>;
   allowlist?: string[];
   denylist?: string[];
+  onEviction?: (reason: StoreEvictionReason, count?: number) => void;
 }) {
   if (!options.minBalanceWei) {
     return { allow: async () => true };
   }
   const minBalance = BigInt(options.minBalanceWei);
   const cacheTtl = options.cacheTtlMs ?? DEFAULT_BALANCE_CACHE_MS;
+  const maxEntries = options.maxEntries ?? DEFAULT_BALANCE_CACHE_MAX_ENTRIES;
   const provider = options.provider;
   if (!provider) {
     throw new Error('Balance provider required when minBalanceWei is set');
@@ -892,15 +1098,39 @@ function createBalanceChecker(options: {
   const cache = new Map<string, { value: bigint; fetchedAt: number }>();
   const allowSet = new Set((options.allowlist ?? []).map((a) => a.toLowerCase()));
   const denySet = new Set((options.denylist ?? []).map((a) => a.toLowerCase()));
+  const cleanupExpired = (now: number) => {
+    let removed = 0;
+    for (const [key, entry] of cache.entries()) {
+      if (now - entry.fetchedAt >= cacheTtl) {
+        cache.delete(key);
+        removed += 1;
+      }
+    }
+    if (removed > 0) {
+      options.onEviction?.('expired', removed);
+    }
+  };
   return {
     async allow(address: string) {
       const normalized = address.toLowerCase();
       if (denySet.has(normalized)) return false;
       if (allowSet.has(normalized)) return true;
-      const cached = cache.get(normalized);
       const now = Date.now();
+      cleanupExpired(now);
+      const cached = cache.get(normalized);
       if (cached && now - cached.fetchedAt < cacheTtl) {
+        cache.delete(normalized);
+        cache.set(normalized, cached);
         return cached.value >= minBalance;
+      }
+      if (!cached && cache.size >= maxEntries) {
+        const overflow = cache.size - maxEntries + 1;
+        for (let i = 0; i < overflow; i += 1) {
+          const oldest = cache.keys().next().value;
+          if (!oldest) break;
+          cache.delete(oldest);
+        }
+        options.onEviction?.('capacity', overflow);
       }
       const value = await provider(normalized);
       cache.set(normalized, { value, fetchedAt: now });

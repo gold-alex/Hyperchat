@@ -373,6 +373,59 @@ describe('gateway server', () => {
     expect(response.body?.error).toContain('nonce');
   });
 
+  it('rejects new sessions when session store is saturated', async () => {
+    const app = createGatewayServer({
+      rpcUrl,
+      expectedDomain: gatewayDomain,
+      expectedChainId: 1,
+      sessionStoreMaxEntries: 1,
+    });
+    const agent = supertest(app);
+    const wallet1 = Wallet.createRandom();
+    const session1 = generateSessionKeypair();
+    const siweMessage1 = buildBoundSiwe({ address: wallet1.address, sessionPubKeyHex: session1.publicKeyHex });
+    const siweSignature1 = await wallet1.signMessage(siweMessage1);
+    await agent.post('/session').send({ siweMessage: siweMessage1, siweSignature: siweSignature1 }).expect(200);
+
+    const wallet2 = Wallet.createRandom();
+    const session2 = generateSessionKeypair();
+    const siweMessage2 = buildBoundSiwe({ address: wallet2.address, sessionPubKeyHex: session2.publicKeyHex });
+    const siweSignature2 = await wallet2.signMessage(siweMessage2);
+    const response = await agent.post('/session').send({ siweMessage: siweMessage2, siweSignature: siweSignature2 }).expect(503);
+
+    expect(response.body?.error).toBe('Session admission store saturated');
+    const metrics = await agent.get('/metrics').expect(200);
+    expect(metrics.text).toContain('gateway_reject_total{endpoint="/session",reason="session_store_saturated"} 1');
+    expect(metrics.text).toContain('gateway_store_saturation_total{store="session",endpoint="/session"} 1');
+  });
+
+  it('rejects new sessions when nonce store is saturated', async () => {
+    const app = createGatewayServer({
+      rpcUrl,
+      expectedDomain: gatewayDomain,
+      expectedChainId: 1,
+      nonceStoreMaxEntries: 1,
+      sessionStoreMaxEntries: 100,
+    });
+    const agent = supertest(app);
+    const wallet1 = Wallet.createRandom();
+    const session1 = generateSessionKeypair();
+    const siweMessage1 = buildBoundSiwe({ address: wallet1.address, sessionPubKeyHex: session1.publicKeyHex });
+    const siweSignature1 = await wallet1.signMessage(siweMessage1);
+    await agent.post('/session').send({ siweMessage: siweMessage1, siweSignature: siweSignature1 }).expect(200);
+
+    const wallet2 = Wallet.createRandom();
+    const session2 = generateSessionKeypair();
+    const siweMessage2 = buildBoundSiwe({ address: wallet2.address, sessionPubKeyHex: session2.publicKeyHex });
+    const siweSignature2 = await wallet2.signMessage(siweMessage2);
+    const response = await agent.post('/session').send({ siweMessage: siweMessage2, siweSignature: siweSignature2 }).expect(503);
+
+    expect(response.body?.error).toBe('Nonce admission store saturated');
+    const metrics = await agent.get('/metrics').expect(200);
+    expect(metrics.text).toContain('gateway_reject_total{endpoint="/session",reason="nonce_store_saturated"} 1');
+    expect(metrics.text).toContain('gateway_store_saturation_total{store="nonce",endpoint="/session"} 1');
+  });
+
   it('rejects messages when session key differs', async () => {
     const app = createGatewayServer({
       rpcUrl,
@@ -604,6 +657,62 @@ describe('gateway server', () => {
     expect(rpcCallCount).toBe(1);
   });
 
+  it('evicts bounded dedupe entries under capacity pressure', async () => {
+    const app = createGatewayServer({
+      rpcUrl,
+      allowedTopics: [metadata.contentTopic],
+      allowedPubsubTopics: [metadata.pubsubTopic],
+      expectedDomain: gatewayDomain,
+      expectedChainId: 1,
+      messageIdTtlMs: 5 * 60 * 1000,
+      messageDeduperMaxEntries: 1,
+      rateLimit: 10,
+      rateLimitWindowMs: 60_000,
+    });
+    const agent = supertest(app);
+    const wallet = Wallet.createRandom();
+    const session = generateSessionKeypair();
+    const siweMessage = buildBoundSiwe({ address: wallet.address, sessionPubKeyHex: session.publicKeyHex });
+    const siweSignature = await wallet.signMessage(siweMessage);
+    const { body } = await agent.post('/session').send({ siweMessage, siweSignature }).expect(200);
+
+    const makePayload = (note: string, offsetMs: number) => {
+      const ts = Date.now() + offsetMs;
+      const envelope = signEnvelope({
+        metadata,
+        message: { text: note, timestamp: ts },
+        senderAddress: wallet.address,
+        sessionPrivKeyHex: session.privateKeyHex,
+        sessionPubKeyHex: session.publicKeyHex,
+        timestampMs: ts,
+      });
+      return encodeEnvelopePayload(envelope);
+    };
+
+    await agent
+      .post('/message')
+      .send({
+        sessionId: body.sessionId,
+        contentTopic: metadata.contentTopic,
+        pubsubTopic: metadata.pubsubTopic,
+        payloadBase64: makePayload('first', 0),
+      })
+      .expect(200);
+
+    await agent
+      .post('/message')
+      .send({
+        sessionId: body.sessionId,
+        contentTopic: metadata.contentTopic,
+        pubsubTopic: metadata.pubsubTopic,
+        payloadBase64: makePayload('second', 10),
+      })
+      .expect(200);
+
+    const metrics = await agent.get('/metrics').expect(200);
+    expect(metrics.text).toContain('gateway_store_eviction_total{store="message_dedupe",reason="capacity"} 1');
+  });
+
   it('enforces minimum token balance using injected provider', async () => {
     const balanceProvider = vi.fn().mockResolvedValue(BigInt('0x1000000000000000'));
     const app = createGatewayServer({
@@ -715,6 +824,8 @@ describe('gateway server', () => {
     expect(metrics.text).toContain('gateway_reject_total{endpoint="/message",reason="missing_required_fields"} 1');
     expect(metrics.text).toContain('gateway_publish_total{outcome="success"} 0');
     expect(metrics.text).toContain('gateway_publish_total{outcome="failure"} 0');
+    expect(metrics.text).toContain('# TYPE gateway_store_saturation_total counter');
+    expect(metrics.text).toContain('# TYPE gateway_store_eviction_total counter');
     expect(metrics.text).not.toContain('reason="unknown_session"} 1');
   });
 

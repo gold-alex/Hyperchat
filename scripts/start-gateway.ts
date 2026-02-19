@@ -96,13 +96,18 @@ const config = {
   minSessionTtlMs: parseNumber(process.env.LP_SESSION_TTL_MIN_MS),
   maxSessionTtlMs: parseNumber(process.env.LP_SESSION_TTL_MAX_MS),
   nonceTtlMs: parseNumber(process.env.LP_NONCE_TTL_MS),
+  sessionStoreMaxEntries: parseNumber(process.env.LP_SESSION_STORE_MAX_ENTRIES),
+  nonceStoreMaxEntries: parseNumber(process.env.LP_NONCE_STORE_MAX_ENTRIES),
   bodyLimit: process.env.LP_BODY_LIMIT,
   maxMessagePayloadBytes: parseNumber(process.env.LP_MAX_MESSAGE_PAYLOAD_BYTES),
   rateLimit: parseNumber(process.env.LP_RATE_LIMIT),
   rateLimitWindowMs: parseNumber(process.env.LP_RATE_WINDOW),
+  rateLimitMaxEntries: parseNumber(process.env.LP_RATE_LIMIT_MAX_ENTRIES),
   messageIdTtlMs: parseNumber(process.env.LP_MESSAGE_ID_TTL_MS),
+  messageDeduperMaxEntries: parseNumber(process.env.LP_MESSAGE_DEDUPER_MAX_ENTRIES),
   minBalanceWei: parseBigint(process.env.LP_MIN_BALANCE_WEI),
   balanceCacheTtlMs: parseNumber(process.env.LP_BALANCE_CACHE_TTL_MS),
+  balanceCacheMaxEntries: parseNumber(process.env.LP_BALANCE_CACHE_MAX_ENTRIES),
   allowlist,
   denylist,
   requireTopicBinding: parseBoolean(process.env.LP_REQUIRE_TOPIC_BINDING),
@@ -122,4 +127,9 @@ app.listen(port, () => {
   if (config.lightpushPeerId) console.log(`  lightpushPeerId: ${config.lightpushPeerId}`);
   if (allowedTopics) console.log(`  allowedTopics: ${allowedTopics.join(', ')}`);
   if (allowedPubsubTopics) console.log(`  allowedPubsubTopics: ${allowedPubsubTopics.join(', ')}`);
+  if (config.sessionStoreMaxEntries !== undefined) console.log(`  sessionStoreMaxEntries: ${config.sessionStoreMaxEntries}`);
+  if (config.nonceStoreMaxEntries !== undefined) console.log(`  nonceStoreMaxEntries: ${config.nonceStoreMaxEntries}`);
+  if (config.rateLimitMaxEntries !== undefined) console.log(`  rateLimitMaxEntries: ${config.rateLimitMaxEntries}`);
+  if (config.messageDeduperMaxEntries !== undefined) console.log(`  messageDeduperMaxEntries: ${config.messageDeduperMaxEntries}`);
+  if (config.balanceCacheMaxEntries !== undefined) console.log(`  balanceCacheMaxEntries: ${config.balanceCacheMaxEntries}`);
 });
