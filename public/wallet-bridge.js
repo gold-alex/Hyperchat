@@ -1,6 +1,10 @@
 // Wallet bridge script - runs in page context to access window.ethereum
 (function() {
   let bridgeAuthToken = null;
+  const consumedNonces = new Map();
+  const NONCE_MAX_AGE_MS = 15000;
+  const NONCE_MAX_TTL_MS = 30000;
+  const NONCE_CACHE_MAX = 2000;
 
   /**
    * Returns the most appropriate EIP-1193 provider.
@@ -30,16 +34,61 @@
     return ethereum;
   }
 
-  function postAuthError(responseType, id, message) {
+  function postAuthError(responseType, id, nonce, message) {
     window.postMessage({
       type: responseType,
       id,
+      nonce,
       error: message || 'Bridge authentication failed',
     }, '*');
   }
 
   function isValidAuthToken(value) {
     return typeof value === 'string' && value.trim().length >= 12;
+  }
+
+  function isFiniteNumber(value) {
+    return typeof value === 'number' && Number.isFinite(value);
+  }
+
+  function isValidBridgeNonce(value) {
+    return typeof value === 'string' && value.trim().length >= 12;
+  }
+
+  function pruneConsumedNonces(nowMs) {
+    for (const [nonce, expiresAtMs] of consumedNonces.entries()) {
+      if (expiresAtMs <= nowMs) consumedNonces.delete(nonce);
+    }
+    while (consumedNonces.size > NONCE_CACHE_MAX) {
+      const oldest = consumedNonces.keys().next().value;
+      if (!oldest) break;
+      consumedNonces.delete(oldest);
+    }
+  }
+
+  function validateAndConsumeNonce(data) {
+    const nonce = data?.nonce;
+    const requestTsMs = data?.requestTsMs;
+    const nonceExpiresAtMs = data?.nonceExpiresAtMs;
+    const nowMs = Date.now();
+
+    if (!isValidBridgeNonce(nonce) || !isFiniteNumber(requestTsMs) || !isFiniteNumber(nonceExpiresAtMs)) {
+      return { ok: false, nonce, error: 'Bridge nonce missing or invalid' };
+    }
+    if (nonceExpiresAtMs <= requestTsMs || (nonceExpiresAtMs - requestTsMs) > NONCE_MAX_TTL_MS) {
+      return { ok: false, nonce, error: 'Bridge nonce missing or invalid' };
+    }
+    if ((nowMs - requestTsMs) > NONCE_MAX_AGE_MS || nowMs > nonceExpiresAtMs) {
+      return { ok: false, nonce, error: 'Bridge nonce expired' };
+    }
+
+    pruneConsumedNonces(nowMs);
+    if (consumedNonces.has(nonce)) {
+      return { ok: false, nonce, error: 'Bridge nonce replay detected' };
+    }
+
+    consumedNonces.set(nonce, Math.max(nowMs + NONCE_MAX_AGE_MS, nonceExpiresAtMs));
+    return { ok: true, nonce };
   }
 
   // Listen for wallet connection requests from content script
@@ -77,7 +126,13 @@
 
     if (event.data.type === 'HL_CONNECT_WALLET_REQUEST') {
       if (!bridgeAuthToken || event.data.authToken !== bridgeAuthToken) {
-        postAuthError('HL_CONNECT_WALLET_RESPONSE', event.data.id, 'Bridge authentication failed');
+        postAuthError('HL_CONNECT_WALLET_RESPONSE', event.data.id, event.data.nonce, 'Bridge authentication failed');
+        return;
+      }
+
+      const nonceState = validateAndConsumeNonce(event.data);
+      if (!nonceState.ok) {
+        postAuthError('HL_CONNECT_WALLET_RESPONSE', event.data.id, nonceState.nonce, nonceState.error);
         return;
       }
       try {
@@ -97,6 +152,7 @@
         window.postMessage({
           type: 'HL_CONNECT_WALLET_RESPONSE',
           id: event.data.id,
+          nonce: event.data.nonce,
           accounts: accounts
         }, '*');
 
@@ -104,6 +160,7 @@
         window.postMessage({
           type: 'HL_CONNECT_WALLET_RESPONSE',
           id: event.data.id,
+          nonce: event.data.nonce,
           error: error.message
         }, '*');
       }
@@ -111,7 +168,13 @@
 
     if (event.data.type === 'HL_SIGN_REQUEST') {
       if (!bridgeAuthToken || event.data.authToken !== bridgeAuthToken) {
-        postAuthError('HL_SIGN_RESPONSE', event.data.id, 'Bridge authentication failed');
+        postAuthError('HL_SIGN_RESPONSE', event.data.id, event.data.nonce, 'Bridge authentication failed');
+        return;
+      }
+
+      const nonceState = validateAndConsumeNonce(event.data);
+      if (!nonceState.ok) {
+        postAuthError('HL_SIGN_RESPONSE', event.data.id, nonceState.nonce, nonceState.error);
         return;
       }
       try {
@@ -148,6 +211,7 @@
         window.postMessage({
           type: 'HL_SIGN_RESPONSE',
           id: event.data.id,
+          nonce: event.data.nonce,
           signature: signature
         }, '*');
 
@@ -155,6 +219,7 @@
         window.postMessage({
           type: 'HL_SIGN_RESPONSE',
           id: event.data.id,
+          nonce: event.data.nonce,
           error: error.message
         }, '*');
       }

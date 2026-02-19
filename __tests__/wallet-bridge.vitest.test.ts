@@ -3,9 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 describe('Wallet Bridge (Vitest)', () => {
   let messageHandler: ((e: MessageEvent) => void) | undefined;
   const authToken = 'bridge-auth-token-12345';
+  let nonceCounter = 0;
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    vi.resetModules();
+    nonceCounter = 0;
 
     // @ts-ignore - test shim
     window.ethereum = undefined;
@@ -24,6 +27,17 @@ describe('Wallet Bridge (Vitest)', () => {
     window.addEventListener = originalAddEventListener;
   });
 
+  function createNoncePayload(overrides: Record<string, unknown> = {}) {
+    nonceCounter += 1;
+    const requestTsMs = Date.now();
+    return {
+      nonce: `nonce-${nonceCounter}-abcdef123456`,
+      requestTsMs,
+      nonceExpiresAtMs: requestTsMs + 10_000,
+      ...overrides,
+    };
+  }
+
   async function initBridgeToken(token = authToken) {
     await messageHandler!({
       source: window,
@@ -37,28 +51,35 @@ describe('Wallet Bridge (Vitest)', () => {
 
     await messageHandler!({
       source: window,
-      data: { type: 'HL_CONNECT_WALLET_REQUEST', id: 'connect-1' },
+      data: { type: 'HL_CONNECT_WALLET_REQUEST', id: 'connect-1', ...createNoncePayload() },
     } as any);
 
     expect((window as any).ethereum.request).not.toHaveBeenCalled();
     expect(window.postMessage).toHaveBeenCalledWith(
-      { type: 'HL_CONNECT_WALLET_RESPONSE', id: 'connect-1', error: 'Bridge authentication failed' },
+      {
+        type: 'HL_CONNECT_WALLET_RESPONSE',
+        id: 'connect-1',
+        nonce: expect.any(String),
+        error: 'Bridge authentication failed',
+      },
       '*',
     );
   });
 
   it('getProvider: returns error when no wallet present after auth', async () => {
+    const noncePayload = createNoncePayload();
     await initBridgeToken();
 
     await messageHandler!({
       source: window,
-      data: { type: 'HL_CONNECT_WALLET_REQUEST', id: 'connect-2', authToken },
+      data: { type: 'HL_CONNECT_WALLET_REQUEST', id: 'connect-2', authToken, ...noncePayload },
     } as any);
 
     expect(window.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'HL_CONNECT_WALLET_RESPONSE',
         id: 'connect-2',
+        nonce: noncePayload.nonce,
         error: expect.stringContaining('No Ethereum wallet'),
       }),
       '*',
@@ -73,17 +94,18 @@ describe('Wallet Bridge (Vitest)', () => {
         { isRabby: true, request: vi.fn().mockResolvedValue(['0xrabby']) },
       ],
     };
+    const noncePayload = createNoncePayload();
     await initBridgeToken();
 
     await messageHandler!({
       source: window,
-      data: { type: 'HL_CONNECT_WALLET_REQUEST', id: 'connect-3', authToken },
+      data: { type: 'HL_CONNECT_WALLET_REQUEST', id: 'connect-3', authToken, ...noncePayload },
     } as any);
 
     // @ts-ignore
     expect(window.ethereum.providers[1].request).toHaveBeenCalledWith({ method: 'eth_requestAccounts' });
     expect(window.postMessage).toHaveBeenCalledWith(
-      { type: 'HL_CONNECT_WALLET_RESPONSE', id: 'connect-3', accounts: ['0xrabby'] },
+      { type: 'HL_CONNECT_WALLET_RESPONSE', id: 'connect-3', nonce: noncePayload.nonce, accounts: ['0xrabby'] },
       '*',
     );
   });
@@ -95,12 +117,13 @@ describe('Wallet Bridge (Vitest)', () => {
       .mockResolvedValueOnce('0xsignature');
     // @ts-ignore
     window.ethereum = { request };
+    const noncePayload = createNoncePayload();
 
     await initBridgeToken();
 
     await messageHandler!({
       source: window,
-      data: { type: 'HL_SIGN_REQUEST', id: 'sign-1', message: 'Hello', address: '0xabc', authToken },
+      data: { type: 'HL_SIGN_REQUEST', id: 'sign-1', message: 'Hello', address: '0xabc', authToken, ...noncePayload },
     } as any);
 
     expect(request).toHaveBeenNthCalledWith(1, { method: 'eth_accounts' });
@@ -109,7 +132,67 @@ describe('Wallet Bridge (Vitest)', () => {
       params: ['Hello', '0xabc'],
     });
     expect(window.postMessage).toHaveBeenCalledWith(
-      { type: 'HL_SIGN_RESPONSE', id: 'sign-1', signature: '0xsignature' },
+      { type: 'HL_SIGN_RESPONSE', id: 'sign-1', nonce: noncePayload.nonce, signature: '0xsignature' },
+      '*',
+    );
+  });
+
+  it('rejects replayed nonces before provider call', async () => {
+    const request = vi.fn().mockResolvedValue(['0xabc']);
+    // @ts-ignore
+    window.ethereum = { request };
+    const noncePayload = createNoncePayload();
+
+    await initBridgeToken();
+
+    await messageHandler!({
+      source: window,
+      data: { type: 'HL_CONNECT_WALLET_REQUEST', id: 'connect-replay-1', authToken, ...noncePayload },
+    } as any);
+    await messageHandler!({
+      source: window,
+      data: { type: 'HL_CONNECT_WALLET_REQUEST', id: 'connect-replay-2', authToken, ...noncePayload },
+    } as any);
+
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(window.postMessage).toHaveBeenLastCalledWith(
+      {
+        type: 'HL_CONNECT_WALLET_RESPONSE',
+        id: 'connect-replay-2',
+        nonce: noncePayload.nonce,
+        error: 'Bridge nonce replay detected',
+      },
+      '*',
+    );
+  });
+
+  it('rejects stale nonces before provider call', async () => {
+    const request = vi.fn().mockResolvedValue(['0xabc']);
+    // @ts-ignore
+    window.ethereum = { request };
+
+    await initBridgeToken();
+
+    await messageHandler!({
+      source: window,
+      data: {
+        type: 'HL_CONNECT_WALLET_REQUEST',
+        id: 'connect-stale',
+        authToken,
+        ...createNoncePayload({
+          requestTsMs: Date.now() - 60_000,
+          nonceExpiresAtMs: Date.now() - 30_000,
+        }),
+      },
+    } as any);
+
+    expect(request).not.toHaveBeenCalled();
+    expect(window.postMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'HL_CONNECT_WALLET_RESPONSE',
+        id: 'connect-stale',
+        error: 'Bridge nonce expired',
+      }),
       '*',
     );
   });

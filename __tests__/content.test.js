@@ -1401,27 +1401,57 @@ describe('Hyperchat - Module K: Wallet Bridge wrappers', () => {
     jest.restoreAllMocks();
   });
 
-  test('K1: requestAccounts - should post a HL_CONNECT_WALLET_REQUEST message', () => {
-    // Call real method
-    chat.requestAccounts();
+  test('K1: requestAccounts - should post a HL_CONNECT_WALLET_REQUEST message', async () => {
+    const pending = chat.requestAccounts();
+    const requestCall = window.postMessage.mock.calls.find(
+      ([payload]) => payload?.type === 'HL_CONNECT_WALLET_REQUEST'
+    );
+    const request = requestCall?.[0];
+    window.dispatchEvent(new MessageEvent('message', {
+      data: {
+        type: 'HL_CONNECT_WALLET_RESPONSE',
+        id: request.id,
+        nonce: request.nonce,
+        accounts: ['0xabc'],
+      },
+      source: window,
+    }));
+    await expect(pending).resolves.toEqual(['0xabc']);
 
     // Assert that correct message was posted to window
     expect(window.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'HL_CONNECT_WALLET_REQUEST',
         authToken: expect.any(String),
+        nonce: expect.any(String),
+        requestTsMs: expect.any(Number),
+        nonceExpiresAtMs: expect.any(Number),
       }),
       '*'
     );
   });
 
-  test('K2: signMessage - should post a HL_SIGN_REQUEST message with correct payload', () => {
+  test('K2: signMessage - should post a HL_SIGN_REQUEST message with correct payload', async () => {
     // Setup
     chat.walletAddress = '0x123abc';
     const messageToSign = 'gm, sers.';
 
     // Call real method
-    chat.signMessage(messageToSign);
+    const pending = chat.signMessage(messageToSign);
+    const requestCall = window.postMessage.mock.calls.find(
+      ([payload]) => payload?.type === 'HL_SIGN_REQUEST'
+    );
+    const request = requestCall?.[0];
+    window.dispatchEvent(new MessageEvent('message', {
+      data: {
+        type: 'HL_SIGN_RESPONSE',
+        id: request.id,
+        nonce: request.nonce,
+        signature: '0xsigned',
+      },
+      source: window,
+    }));
+    await expect(pending).resolves.toBe('0xsigned');
 
     // Assert that correct message was posted
     expect(window.postMessage).toHaveBeenCalledWith(
@@ -1430,6 +1460,9 @@ describe('Hyperchat - Module K: Wallet Bridge wrappers', () => {
         message: messageToSign,
         address: '0x123abc',
         authToken: expect.any(String),
+        nonce: expect.any(String),
+        requestTsMs: expect.any(Number),
+        nonceExpiresAtMs: expect.any(Number),
       }),
       '*'
     );

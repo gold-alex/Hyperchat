@@ -112,7 +112,12 @@ describe('Hyperchat UI + wallet flows', () => {
     const cleanup = (event) => {
       if (event.data?.type !== 'HL_CONNECT_WALLET_REQUEST') return;
       const response = new MessageEvent('message', {
-        data: { type: 'HL_CONNECT_WALLET_RESPONSE', id: event.data.id, accounts: ['0xabc'] },
+        data: {
+          type: 'HL_CONNECT_WALLET_RESPONSE',
+          id: event.data.id,
+          nonce: event.data.nonce,
+          accounts: ['0xabc'],
+        },
         source: window,
       });
       window.dispatchEvent(response);
@@ -134,7 +139,12 @@ describe('Hyperchat UI + wallet flows', () => {
     const cleanup = (event) => {
       if (event.data?.type !== 'HL_SIGN_REQUEST') return;
       const response = new MessageEvent('message', {
-        data: { type: 'HL_SIGN_RESPONSE', id: event.data.id, signature: '0xsig' },
+        data: {
+          type: 'HL_SIGN_RESPONSE',
+          id: event.data.id,
+          nonce: event.data.nonce,
+          signature: '0xsig',
+        },
         source: window,
       });
       window.dispatchEvent(response);
@@ -147,6 +157,40 @@ describe('Hyperchat UI + wallet flows', () => {
     window.removeEventListener('message', cleanup);
     randomSpy.mockRestore();
     nowSpy.mockRestore();
+  });
+
+  it('ignores mismatched nonce responses and resolves on matching nonce', async () => {
+    const cleanup = (event) => {
+      if (event.data?.type !== 'HL_SIGN_REQUEST') return;
+
+      const mismatched = new MessageEvent('message', {
+        data: {
+          type: 'HL_SIGN_RESPONSE',
+          id: event.data.id,
+          nonce: `${event.data.nonce}-mismatch`,
+          signature: '0xwrong',
+        },
+        source: window,
+      });
+      window.dispatchEvent(mismatched);
+
+      const matched = new MessageEvent('message', {
+        data: {
+          type: 'HL_SIGN_RESPONSE',
+          id: event.data.id,
+          nonce: event.data.nonce,
+          signature: '0xcorrect',
+        },
+        source: window,
+      });
+      window.dispatchEvent(matched);
+    };
+    window.addEventListener('message', cleanup);
+
+    const signature = await chat.signMessage('hello');
+
+    expect(signature).toBe('0xcorrect');
+    window.removeEventListener('message', cleanup);
   });
 
   it('authenticateWallet succeeds when signature verifies', async () => {

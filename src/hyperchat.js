@@ -123,6 +123,9 @@ export class Hyperchat {
     this.realtimeChannel = null;
     this.hlNamesApiKey = typeof config.hlNamesApiKey === 'string' ? config.hlNamesApiKey.trim() : '';
     this.walletBridgeAuthToken = null;
+    this.walletBridgePendingRequests = new Map();
+    this.walletBridgeNonceTtlMs = 15000;
+    this.walletBridgeRequestTimeoutMs = 20000;
 
     if (!window.DISABLE_WALLET_BRIDGE) {
       this.injectWalletBridge();
@@ -594,31 +597,85 @@ export class Hyperchat {
 
   requestAccounts() {
     const authToken = this._initWalletBridgeAuth();
-    return new Promise((resolve, reject) => {
-      const id = Date.now() + Math.random();
-      const handler = (event) => {
-        if (event.source !== window || !event.data || event.data.type !== 'HL_CONNECT_WALLET_RESPONSE' || event.data.id !== id) return;
-        window.removeEventListener('message', handler);
-        if (event.data.error) reject(new Error(event.data.error));
-        else resolve(event.data.accounts);
-      };
-      window.addEventListener('message', handler);
-      window.postMessage({ type: 'HL_CONNECT_WALLET_REQUEST', id, authToken }, '*');
+    return this._sendWalletBridgeRequest({
+      requestType: 'HL_CONNECT_WALLET_REQUEST',
+      responseType: 'HL_CONNECT_WALLET_RESPONSE',
+      payload: { authToken },
+      mapResult: (data) => data.accounts,
     });
   }
 
   signMessage(message) {
     const authToken = this._initWalletBridgeAuth();
+    return this._sendWalletBridgeRequest({
+      requestType: 'HL_SIGN_REQUEST',
+      responseType: 'HL_SIGN_RESPONSE',
+      payload: {
+        message,
+        address: this.walletAddress,
+        authToken,
+      },
+      mapResult: (data) => data.signature,
+    });
+  }
+
+  _sendWalletBridgeRequest({ requestType, responseType, payload, mapResult }) {
+    const id = Date.now() + Math.random();
+    const requestTsMs = Date.now();
+    const nonce = this.createBridgeNonce();
+    const nonceExpiresAtMs = requestTsMs + this.walletBridgeNonceTtlMs;
     return new Promise((resolve, reject) => {
-      const id = Date.now() + Math.random();
-      const handler = (event) => {
-        if (event.source !== window || !event.data || event.data.type !== 'HL_SIGN_RESPONSE' || event.data.id !== id) return;
+      this.walletBridgePendingRequests.set(id, {
+        nonce,
+        nonceExpiresAtMs,
+        responseType,
+      });
+      const timeoutId = setTimeout(() => {
+        const pending = this.walletBridgePendingRequests.get(id);
+        if (!pending || pending.nonce !== nonce) return;
+        this.walletBridgePendingRequests.delete(id);
         window.removeEventListener('message', handler);
-        if (event.data.error) reject(new Error(event.data.error));
-        else resolve(event.data.signature);
+        reject(new Error('Wallet bridge request timed out'));
+      }, this.walletBridgeRequestTimeoutMs);
+      const handler = (event) => {
+        if (event.source !== window || !event.data || event.data.type !== responseType || event.data.id !== id) return;
+        const pending = this.walletBridgePendingRequests.get(id);
+        if (!pending) return;
+        if (event.data.nonce !== pending.nonce) {
+          this.logIgnoredWalletBridgeResponse('nonce_mismatch', event.data);
+          return;
+        }
+        if (Date.now() > pending.nonceExpiresAtMs) {
+          this.logIgnoredWalletBridgeResponse('stale_response', event.data);
+          return;
+        }
+        this.walletBridgePendingRequests.delete(id);
+        window.removeEventListener('message', handler);
+        clearTimeout(timeoutId);
+        if (event.data.error) {
+          reject(new Error(event.data.error));
+          return;
+        }
+        resolve(mapResult(event.data));
       };
       window.addEventListener('message', handler);
-      window.postMessage({ type: 'HL_SIGN_REQUEST', id, message, address: this.walletAddress, authToken }, '*');
+      window.postMessage({
+        type: requestType,
+        id,
+        nonce,
+        requestTsMs,
+        nonceExpiresAtMs,
+        ...payload,
+      }, '*');
+    });
+  }
+
+  logIgnoredWalletBridgeResponse(reason, response) {
+    if (isTestEnv) return;
+    console.warn(`Ignoring wallet bridge response: ${reason}`, {
+      type: response?.type,
+      id: response?.id,
+      nonce: response?.nonce,
     });
   }
 
@@ -639,6 +696,15 @@ export class Hyperchat {
   createBridgeAuthToken() {
     if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
       const bytes = new Uint8Array(16);
+      window.crypto.getRandomValues(bytes);
+      return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    }
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  createBridgeNonce() {
+    if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(12);
       window.crypto.getRandomValues(bytes);
       return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
     }
