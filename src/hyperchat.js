@@ -122,6 +122,7 @@ export class Hyperchat {
     this.extensionAPI = resolveExtensionAPI(config.extensionAPI);
     this.realtimeChannel = null;
     this.hlNamesApiKey = typeof config.hlNamesApiKey === 'string' ? config.hlNamesApiKey.trim() : '';
+    this.walletBridgeAuthToken = null;
 
     if (!window.DISABLE_WALLET_BRIDGE) {
       this.injectWalletBridge();
@@ -592,6 +593,7 @@ export class Hyperchat {
   }
 
   requestAccounts() {
+    const authToken = this._initWalletBridgeAuth();
     return new Promise((resolve, reject) => {
       const id = Date.now() + Math.random();
       const handler = (event) => {
@@ -601,11 +603,12 @@ export class Hyperchat {
         else resolve(event.data.accounts);
       };
       window.addEventListener('message', handler);
-      window.postMessage({ type: 'HL_CONNECT_WALLET_REQUEST', id }, '*');
+      window.postMessage({ type: 'HL_CONNECT_WALLET_REQUEST', id, authToken }, '*');
     });
   }
 
   signMessage(message) {
+    const authToken = this._initWalletBridgeAuth();
     return new Promise((resolve, reject) => {
       const id = Date.now() + Math.random();
       const handler = (event) => {
@@ -615,8 +618,31 @@ export class Hyperchat {
         else resolve(event.data.signature);
       };
       window.addEventListener('message', handler);
-      window.postMessage({ type: 'HL_SIGN_REQUEST', id, message, address: this.walletAddress }, '*');
+      window.postMessage({ type: 'HL_SIGN_REQUEST', id, message, address: this.walletAddress, authToken }, '*');
     });
+  }
+
+  _initWalletBridgeAuth() {
+    if (window.DISABLE_WALLET_BRIDGE) return '';
+    if (!this.walletBridgeAuthToken) {
+      this.walletBridgeAuthToken = this.createBridgeAuthToken();
+    }
+    const initId = Date.now() + Math.random();
+    window.postMessage({
+      type: 'HL_BRIDGE_AUTH_INIT',
+      id: initId,
+      authToken: this.walletBridgeAuthToken,
+    }, '*');
+    return this.walletBridgeAuthToken;
+  }
+
+  createBridgeAuthToken() {
+    if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16);
+      window.crypto.getRandomValues(bytes);
+      return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    }
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
 
   async fetchHLNames(address) {

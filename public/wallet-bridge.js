@@ -1,5 +1,7 @@
 // Wallet bridge script - runs in page context to access window.ethereum
 (function() {
+  let bridgeAuthToken = null;
+
   /**
    * Returns the most appropriate EIP-1193 provider.
    * Priority:
@@ -28,11 +30,56 @@
     return ethereum;
   }
 
+  function postAuthError(responseType, id, message) {
+    window.postMessage({
+      type: responseType,
+      id,
+      error: message || 'Bridge authentication failed',
+    }, '*');
+  }
+
+  function isValidAuthToken(value) {
+    return typeof value === 'string' && value.trim().length >= 12;
+  }
+
   // Listen for wallet connection requests from content script
   window.addEventListener('message', async (event) => {
     if (event.source !== window || !event.data) return;
 
+    if (event.data.type === 'HL_BRIDGE_AUTH_INIT') {
+      const requestedToken = event.data.authToken;
+      if (!isValidAuthToken(requestedToken)) {
+        window.postMessage({
+          type: 'HL_BRIDGE_AUTH_RESPONSE',
+          id: event.data.id,
+          error: 'Invalid bridge auth token',
+        }, '*');
+        return;
+      }
+
+      if (bridgeAuthToken && bridgeAuthToken !== requestedToken) {
+        window.postMessage({
+          type: 'HL_BRIDGE_AUTH_RESPONSE',
+          id: event.data.id,
+          error: 'Bridge auth token mismatch',
+        }, '*');
+        return;
+      }
+
+      bridgeAuthToken = requestedToken;
+      window.postMessage({
+        type: 'HL_BRIDGE_AUTH_RESPONSE',
+        id: event.data.id,
+        ok: true,
+      }, '*');
+      return;
+    }
+
     if (event.data.type === 'HL_CONNECT_WALLET_REQUEST') {
+      if (!bridgeAuthToken || event.data.authToken !== bridgeAuthToken) {
+        postAuthError('HL_CONNECT_WALLET_RESPONSE', event.data.id, 'Bridge authentication failed');
+        return;
+      }
       try {
         const provider = getProvider();
         if (!provider) {
@@ -63,6 +110,10 @@
     }
 
     if (event.data.type === 'HL_SIGN_REQUEST') {
+      if (!bridgeAuthToken || event.data.authToken !== bridgeAuthToken) {
+        postAuthError('HL_SIGN_RESPONSE', event.data.id, 'Bridge authentication failed');
+        return;
+      }
       try {
         const provider = getProvider();
         if (!provider) {

@@ -1408,7 +1408,8 @@ describe('Hyperchat - Module K: Wallet Bridge wrappers', () => {
     // Assert that correct message was posted to window
     expect(window.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'HL_CONNECT_WALLET_REQUEST'
+        type: 'HL_CONNECT_WALLET_REQUEST',
+        authToken: expect.any(String),
       }),
       '*'
     );
@@ -1427,7 +1428,8 @@ describe('Hyperchat - Module K: Wallet Bridge wrappers', () => {
       expect.objectContaining({
         type: 'HL_SIGN_REQUEST',
         message: messageToSign,
-        address: '0x123abc'
+        address: '0x123abc',
+        authToken: expect.any(String),
       }),
       '*'
     );
