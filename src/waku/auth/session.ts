@@ -240,21 +240,6 @@ export function canonicalizeEnvelope<T>(input: {
   });
 }
 
-function canonicalizeLegacyEnvelope<T>(input: {
-  metadata: EnvelopeMetadata;
-  message: T;
-  sessionPubKey: string;
-  timestampMs: number;
-}) {
-  return JSON.stringify({
-    contentTopic: input.metadata.contentTopic,
-    pubsubTopic: input.metadata.pubsubTopic,
-    message: input.message,
-    timestampMs: input.timestampMs,
-    sessionPubKey: input.sessionPubKey,
-  });
-}
-
 export function hashEnvelopeContent<T>(input: {
   metadata: EnvelopeMetadata;
   message: T;
@@ -263,16 +248,6 @@ export function hashEnvelopeContent<T>(input: {
   timestampMs: number;
 }) {
   const canonical = canonicalizeEnvelope(input);
-  return sha256(encodeUtf8(canonical));
-}
-
-function hashLegacyEnvelopeContent<T>(input: {
-  metadata: EnvelopeMetadata;
-  message: T;
-  sessionPubKey: string;
-  timestampMs: number;
-}) {
-  const canonical = canonicalizeLegacyEnvelope(input);
   return sha256(encodeUtf8(canonical));
 }
 
@@ -311,9 +286,8 @@ export function signEnvelope<T>(params: {
 export function verifyEnvelope<T>(params: {
   metadata: EnvelopeMetadata;
   envelope: SignedEnvelope<T>;
-  allowLegacyUnsignedSenderAddress?: boolean;
 }) {
-  const { metadata, envelope, allowLegacyUnsignedSenderAddress = false } = params;
+  const { metadata, envelope } = params;
   const hash = hashEnvelopeContent({
     metadata,
     message: envelope.message,
@@ -322,23 +296,8 @@ export function verifyEnvelope<T>(params: {
     timestampMs: envelope.timestampMs,
   });
   const normalizedMessageId = normalizeHex(envelope.messageId);
-  if (normalizeHex(bytesToHex(hash)) === normalizedMessageId && verify(envelope.signature, hash, envelope.sessionPubKey)) {
-    return true;
-  }
-  if (!allowLegacyUnsignedSenderAddress) {
-    return false;
-  }
-
-  const legacyHash = hashLegacyEnvelopeContent({
-    metadata,
-    message: envelope.message,
-    sessionPubKey: envelope.sessionPubKey,
-    timestampMs: envelope.timestampMs,
-  });
-  if (normalizeHex(bytesToHex(legacyHash)) !== normalizedMessageId) {
-    return false;
-  }
-  return verify(envelope.signature, legacyHash, envelope.sessionPubKey);
+  if (normalizeHex(bytesToHex(hash)) !== normalizedMessageId) return false;
+  return verify(envelope.signature, hash, envelope.sessionPubKey);
 }
 
 export function encodeEnvelopePayload<T>(envelope: SignedEnvelope<T>) {

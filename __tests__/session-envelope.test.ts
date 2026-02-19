@@ -138,7 +138,7 @@ describe('Session + envelope helpers', () => {
     expect(verifyEnvelope({ metadata, envelope: checksum })).toBe(true);
   });
 
-  it('rejects legacy unsigned-sender envelopes by default and allows via explicit compatibility mode', () => {
+  it('rejects legacy unsigned-sender envelopes', () => {
     const { privateKeyHex, publicKeyHex } = generateSessionKeypair();
     const metadata: EnvelopeMetadata = {
       contentTopic: '/waku-auth-lite/1/chat/json',
@@ -155,13 +155,6 @@ describe('Session + envelope helpers', () => {
     });
 
     expect(verifyEnvelope({ metadata, envelope: legacyEnvelope })).toBe(false);
-    expect(
-      verifyEnvelope({
-        metadata,
-        envelope: legacyEnvelope,
-        allowLegacyUnsignedSenderAddress: true,
-      }),
-    ).toBe(true);
   });
 
   it('encodes and decodes envelope payloads symmetrically', () => {

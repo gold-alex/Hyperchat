@@ -244,7 +244,7 @@ describe('EnvelopeReceiverFilter', () => {
     expect(result.reason).toBe('invalid_envelope_signature');
   });
 
-  it('rejects legacy unsigned-sender envelopes by default and only accepts with compatibility mode', async () => {
+  it('rejects legacy unsigned-sender envelopes', async () => {
     const legacyEnvelope = buildLegacyEnvelope();
     const payload = encodeEnvelopePayload(legacyEnvelope);
 
@@ -253,10 +253,5 @@ describe('EnvelopeReceiverFilter', () => {
     expect(strictResult.accepted).toBe(false);
     expect(strictResult.reason).toBe('invalid_envelope_signature');
 
-    const compatibilityFilter = new EnvelopeReceiverFilter({
-      allowLegacyUnsignedSenderAddress: true,
-    });
-    const compatibilityResult = await compatibilityFilter.evaluateEnvelope(payload, metadata);
-    expect(compatibilityResult.accepted).toBe(true);
   });
 });

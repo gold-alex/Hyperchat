@@ -451,7 +451,7 @@ describe('gateway server', () => {
     expect(lastRpcBody).toBeUndefined();
   });
 
-  it('rejects legacy unsigned-sender envelopes by default and allows them only with explicit compatibility mode', async () => {
+  it('rejects legacy unsigned-sender envelopes', async () => {
     const wallet = Wallet.createRandom();
     const session = generateSessionKeypair();
     const siweMessage = buildBoundSiwe({ address: wallet.address, sessionPubKeyHex: session.publicKeyHex });
@@ -486,25 +486,6 @@ describe('gateway server', () => {
       .expect(400);
     expect(strictResponse.body?.error).toBe('Invalid envelope signature');
 
-    const compatibilityApp = createGatewayServer({
-      rpcUrl,
-      allowedTopics: [metadata.contentTopic],
-      allowedPubsubTopics: [metadata.pubsubTopic],
-      expectedDomain: gatewayDomain,
-      expectedChainId: 1,
-      allowLegacyUnsignedSenderAddress: true,
-    });
-    const compatibilityAgent = supertest(compatibilityApp);
-    const compatibilitySession = await compatibilityAgent.post('/session').send({ siweMessage, siweSignature }).expect(200);
-    await compatibilityAgent
-      .post('/message')
-      .send({
-        sessionId: compatibilitySession.body.sessionId,
-        contentTopic: metadata.contentTopic,
-        pubsubTopic: metadata.pubsubTopic,
-        payloadBase64,
-      })
-      .expect(200);
   });
 
   it('rejects messages outside the allowed clock skew', async () => {
