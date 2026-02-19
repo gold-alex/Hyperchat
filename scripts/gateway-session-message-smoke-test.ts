@@ -55,12 +55,35 @@ function parseGatewayBaseUrl(value: string) {
   return url.href.replace(/\/+$/, '');
 }
 
+function isLoopbackHost(hostname: string) {
+  const normalized = hostname.toLowerCase();
+  return normalized === 'localhost'
+    || normalized === '127.0.0.1'
+    || normalized === '::1'
+    || normalized === '[::1]';
+}
+
 function resolveGatewayBaseUrl() {
   const configuredValue = process.env.LP_SMOKE_GATEWAY_URL ?? process.env.VITE_LIGHTPUSH_GATEWAY_URL;
   if (!configuredValue || !configuredValue.trim()) {
     throw new StageError({
       stage: '/config',
       message: 'Missing gateway URL. Set LP_SMOKE_GATEWAY_URL (or VITE_LIGHTPUSH_GATEWAY_URL) before running gateway:smoke.',
+    });
+  }
+  const parsed = new URL(configuredValue);
+  const protocol = parsed.protocol.replace(':', '').toLowerCase();
+  const isLocal = isLoopbackHost(parsed.hostname);
+  if (protocol !== 'http' && protocol !== 'https') {
+    throw new StageError({
+      stage: '/config',
+      message: `Invalid gateway URL scheme "${protocol}". Use https (or http on localhost/loopback only).`,
+    });
+  }
+  if (protocol === 'http' && !isLocal) {
+    throw new StageError({
+      stage: '/config',
+      message: `Insecure non-local gateway URL is not allowed: ${configuredValue}. Use https for remote gateways.`,
     });
   }
   return parseGatewayBaseUrl(configuredValue);

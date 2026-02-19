@@ -43,4 +43,24 @@ describe('gateway smoke config', () => {
     expect(config.domain).toBe('localhost');
     expect(config.chainId).toBe(1);
   });
+
+  it('rejects insecure remote gateway URL', () => {
+    process.env.LP_SMOKE_GATEWAY_URL = 'http://gateway.example.com';
+    delete process.env.VITE_LIGHTPUSH_GATEWAY_URL;
+
+    expect(() => getConfig()).toThrow(/Insecure non-local gateway URL is not allowed/);
+  });
+
+  it('accepts secure remote gateway URL', () => {
+    process.env.LP_SMOKE_GATEWAY_URL = 'https://gateway.example.com';
+    delete process.env.VITE_LIGHTPUSH_GATEWAY_URL;
+    delete process.env.LP_SMOKE_DOMAIN;
+    delete process.env.LP_DOMAIN;
+    delete process.env.LP_SMOKE_CHAIN_ID;
+    delete process.env.LP_CHAIN_ID;
+
+    const config = getConfig();
+    expect(config.gatewayBaseUrl).toBe('https://gateway.example.com');
+    expect(config.domain).toBe('gateway.example.com');
+  });
 });
