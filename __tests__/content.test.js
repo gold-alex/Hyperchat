@@ -1403,15 +1403,35 @@ describe('Hyperchat - Module K: Wallet Bridge wrappers', () => {
 
   test('K1: requestAccounts - should post a HL_CONNECT_WALLET_REQUEST message', async () => {
     const pending = chat.requestAccounts();
-    const requestCall = window.postMessage.mock.calls.find(
-      ([payload]) => payload?.type === 'HL_CONNECT_WALLET_REQUEST'
+    const bootstrapCall = window.postMessage.mock.calls.find(
+      ([payload]) => payload?.type === 'HL_BRIDGE_BOOTSTRAP_REQUEST'
     );
+    const bootstrap = bootstrapCall?.[0];
+    window.dispatchEvent(new MessageEvent('message', {
+      data: {
+        type: 'HL_BRIDGE_BOOTSTRAP_RESPONSE',
+        id: bootstrap.id,
+        channelSessionId: bootstrap.channelSessionId,
+        channelExpiresAtMs: bootstrap.channelExpiresAtMs,
+        ok: true,
+      },
+      source: window,
+    }));
+    let requestCall;
+    for (let i = 0; i < 5; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      requestCall = window.postMessage.mock.calls.find(
+        ([payload]) => payload?.type === 'HL_CONNECT_WALLET_REQUEST'
+      );
+      if (requestCall) break;
+    }
     const request = requestCall?.[0];
     window.dispatchEvent(new MessageEvent('message', {
       data: {
         type: 'HL_CONNECT_WALLET_RESPONSE',
         id: request.id,
         nonce: request.nonce,
+        channelSessionId: request.channelSessionId,
         accounts: ['0xabc'],
       },
       source: window,
@@ -1423,6 +1443,9 @@ describe('Hyperchat - Module K: Wallet Bridge wrappers', () => {
       expect.objectContaining({
         type: 'HL_CONNECT_WALLET_REQUEST',
         authToken: expect.any(String),
+        channelSessionId: expect.any(String),
+        channelIssuedAtMs: expect.any(Number),
+        channelExpiresAtMs: expect.any(Number),
         nonce: expect.any(String),
         requestTsMs: expect.any(Number),
         nonceExpiresAtMs: expect.any(Number),
@@ -1438,15 +1461,35 @@ describe('Hyperchat - Module K: Wallet Bridge wrappers', () => {
 
     // Call real method
     const pending = chat.signMessage(messageToSign);
-    const requestCall = window.postMessage.mock.calls.find(
-      ([payload]) => payload?.type === 'HL_SIGN_REQUEST'
+    const bootstrapCall = window.postMessage.mock.calls.find(
+      ([payload]) => payload?.type === 'HL_BRIDGE_BOOTSTRAP_REQUEST'
     );
+    const bootstrap = bootstrapCall?.[0];
+    window.dispatchEvent(new MessageEvent('message', {
+      data: {
+        type: 'HL_BRIDGE_BOOTSTRAP_RESPONSE',
+        id: bootstrap.id,
+        channelSessionId: bootstrap.channelSessionId,
+        channelExpiresAtMs: bootstrap.channelExpiresAtMs,
+        ok: true,
+      },
+      source: window,
+    }));
+    let requestCall;
+    for (let i = 0; i < 5; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      requestCall = window.postMessage.mock.calls.find(
+        ([payload]) => payload?.type === 'HL_SIGN_REQUEST'
+      );
+      if (requestCall) break;
+    }
     const request = requestCall?.[0];
     window.dispatchEvent(new MessageEvent('message', {
       data: {
         type: 'HL_SIGN_RESPONSE',
         id: request.id,
         nonce: request.nonce,
+        channelSessionId: request.channelSessionId,
         signature: '0xsigned',
       },
       source: window,
@@ -1460,6 +1503,9 @@ describe('Hyperchat - Module K: Wallet Bridge wrappers', () => {
         message: messageToSign,
         address: '0x123abc',
         authToken: expect.any(String),
+        channelSessionId: expect.any(String),
+        channelIssuedAtMs: expect.any(Number),
+        channelExpiresAtMs: expect.any(Number),
         nonce: expect.any(String),
         requestTsMs: expect.any(Number),
         nonceExpiresAtMs: expect.any(Number),

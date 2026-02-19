@@ -110,12 +110,27 @@ describe('Hyperchat UI + wallet flows', () => {
     const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.1);
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1000);
     const cleanup = (event) => {
+      if (event.data?.type === 'HL_BRIDGE_BOOTSTRAP_REQUEST') {
+        const bootstrapResponse = new MessageEvent('message', {
+          data: {
+            type: 'HL_BRIDGE_BOOTSTRAP_RESPONSE',
+            id: event.data.id,
+            channelSessionId: event.data.channelSessionId,
+            channelExpiresAtMs: event.data.channelExpiresAtMs,
+            ok: true,
+          },
+          source: window,
+        });
+        window.dispatchEvent(bootstrapResponse);
+        return;
+      }
       if (event.data?.type !== 'HL_CONNECT_WALLET_REQUEST') return;
       const response = new MessageEvent('message', {
         data: {
           type: 'HL_CONNECT_WALLET_RESPONSE',
           id: event.data.id,
           nonce: event.data.nonce,
+          channelSessionId: event.data.channelSessionId,
           accounts: ['0xabc'],
         },
         source: window,
@@ -137,12 +152,27 @@ describe('Hyperchat UI + wallet flows', () => {
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(2000);
     chat.walletAddress = '0xabc';
     const cleanup = (event) => {
+      if (event.data?.type === 'HL_BRIDGE_BOOTSTRAP_REQUEST') {
+        const bootstrapResponse = new MessageEvent('message', {
+          data: {
+            type: 'HL_BRIDGE_BOOTSTRAP_RESPONSE',
+            id: event.data.id,
+            channelSessionId: event.data.channelSessionId,
+            channelExpiresAtMs: event.data.channelExpiresAtMs,
+            ok: true,
+          },
+          source: window,
+        });
+        window.dispatchEvent(bootstrapResponse);
+        return;
+      }
       if (event.data?.type !== 'HL_SIGN_REQUEST') return;
       const response = new MessageEvent('message', {
         data: {
           type: 'HL_SIGN_RESPONSE',
           id: event.data.id,
           nonce: event.data.nonce,
+          channelSessionId: event.data.channelSessionId,
           signature: '0xsig',
         },
         source: window,
@@ -161,6 +191,20 @@ describe('Hyperchat UI + wallet flows', () => {
 
   it('ignores mismatched nonce responses and resolves on matching nonce', async () => {
     const cleanup = (event) => {
+      if (event.data?.type === 'HL_BRIDGE_BOOTSTRAP_REQUEST') {
+        const bootstrapResponse = new MessageEvent('message', {
+          data: {
+            type: 'HL_BRIDGE_BOOTSTRAP_RESPONSE',
+            id: event.data.id,
+            channelSessionId: event.data.channelSessionId,
+            channelExpiresAtMs: event.data.channelExpiresAtMs,
+            ok: true,
+          },
+          source: window,
+        });
+        window.dispatchEvent(bootstrapResponse);
+        return;
+      }
       if (event.data?.type !== 'HL_SIGN_REQUEST') return;
 
       const mismatched = new MessageEvent('message', {
@@ -168,6 +212,7 @@ describe('Hyperchat UI + wallet flows', () => {
           type: 'HL_SIGN_RESPONSE',
           id: event.data.id,
           nonce: `${event.data.nonce}-mismatch`,
+          channelSessionId: event.data.channelSessionId,
           signature: '0xwrong',
         },
         source: window,
@@ -179,6 +224,57 @@ describe('Hyperchat UI + wallet flows', () => {
           type: 'HL_SIGN_RESPONSE',
           id: event.data.id,
           nonce: event.data.nonce,
+          channelSessionId: event.data.channelSessionId,
+          signature: '0xcorrect',
+        },
+        source: window,
+      });
+      window.dispatchEvent(matched);
+    };
+    window.addEventListener('message', cleanup);
+
+    const signature = await chat.signMessage('hello');
+
+    expect(signature).toBe('0xcorrect');
+    window.removeEventListener('message', cleanup);
+  });
+
+  it('ignores foreign channel responses and resolves on matching channel session', async () => {
+    const cleanup = (event) => {
+      if (event.data?.type === 'HL_BRIDGE_BOOTSTRAP_REQUEST') {
+        const bootstrapResponse = new MessageEvent('message', {
+          data: {
+            type: 'HL_BRIDGE_BOOTSTRAP_RESPONSE',
+            id: event.data.id,
+            channelSessionId: event.data.channelSessionId,
+            channelExpiresAtMs: event.data.channelExpiresAtMs,
+            ok: true,
+          },
+          source: window,
+        });
+        window.dispatchEvent(bootstrapResponse);
+        return;
+      }
+      if (event.data?.type !== 'HL_SIGN_REQUEST') return;
+
+      const foreignChannel = new MessageEvent('message', {
+        data: {
+          type: 'HL_SIGN_RESPONSE',
+          id: event.data.id,
+          nonce: event.data.nonce,
+          channelSessionId: `${event.data.channelSessionId}-foreign`,
+          signature: '0xwrong',
+        },
+        source: window,
+      });
+      window.dispatchEvent(foreignChannel);
+
+      const matched = new MessageEvent('message', {
+        data: {
+          type: 'HL_SIGN_RESPONSE',
+          id: event.data.id,
+          nonce: event.data.nonce,
+          channelSessionId: event.data.channelSessionId,
           signature: '0xcorrect',
         },
         source: window,

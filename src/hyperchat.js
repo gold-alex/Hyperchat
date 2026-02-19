@@ -126,6 +126,11 @@ export class Hyperchat {
     this.walletBridgePendingRequests = new Map();
     this.walletBridgeNonceTtlMs = 15000;
     this.walletBridgeRequestTimeoutMs = 20000;
+    this.walletBridgeChannelSessionId = '';
+    this.walletBridgeChannelIssuedAtMs = 0;
+    this.walletBridgeChannelExpiresAtMs = 0;
+    this.walletBridgeChannelTtlMs = 30000;
+    this.walletBridgeBootstrapPromise = null;
 
     if (!window.DISABLE_WALLET_BRIDGE) {
       this.injectWalletBridge();
@@ -595,31 +600,36 @@ export class Hyperchat {
     if (widget) widget.remove();
   }
 
-  requestAccounts() {
-    const authToken = this._initWalletBridgeAuth();
+  async requestAccounts() {
+    const bridgeState = await this._ensureWalletBridgeChannel();
     return this._sendWalletBridgeRequest({
       requestType: 'HL_CONNECT_WALLET_REQUEST',
       responseType: 'HL_CONNECT_WALLET_RESPONSE',
-      payload: { authToken },
+      payload: bridgeState,
       mapResult: (data) => data.accounts,
     });
   }
 
-  signMessage(message) {
-    const authToken = this._initWalletBridgeAuth();
+  async signMessage(message) {
+    const bridgeState = await this._ensureWalletBridgeChannel();
     return this._sendWalletBridgeRequest({
       requestType: 'HL_SIGN_REQUEST',
       responseType: 'HL_SIGN_RESPONSE',
       payload: {
         message,
         address: this.walletAddress,
-        authToken,
+        ...bridgeState,
       },
       mapResult: (data) => data.signature,
     });
   }
 
   _sendWalletBridgeRequest({ requestType, responseType, payload, mapResult }) {
+    const channelSessionId = String(payload?.channelSessionId || '');
+    const channelExpiresAtMs = Number(payload?.channelExpiresAtMs || 0);
+    if (!channelSessionId || !Number.isFinite(channelExpiresAtMs) || channelExpiresAtMs <= Date.now()) {
+      return Promise.reject(new Error('Wallet bridge channel is not ready'));
+    }
     const id = Date.now() + Math.random();
     const requestTsMs = Date.now();
     const nonce = this.createBridgeNonce();
@@ -629,6 +639,8 @@ export class Hyperchat {
         nonce,
         nonceExpiresAtMs,
         responseType,
+        channelSessionId,
+        channelExpiresAtMs,
       });
       const timeoutId = setTimeout(() => {
         const pending = this.walletBridgePendingRequests.get(id);
@@ -641,8 +653,16 @@ export class Hyperchat {
         if (event.source !== window || !event.data || event.data.type !== responseType || event.data.id !== id) return;
         const pending = this.walletBridgePendingRequests.get(id);
         if (!pending) return;
+        if (event.data.channelSessionId !== pending.channelSessionId) {
+          this.logIgnoredWalletBridgeResponse('channel_session_mismatch', event.data);
+          return;
+        }
         if (event.data.nonce !== pending.nonce) {
           this.logIgnoredWalletBridgeResponse('nonce_mismatch', event.data);
+          return;
+        }
+        if (Date.now() > pending.channelExpiresAtMs) {
+          this.logIgnoredWalletBridgeResponse('channel_session_expired', event.data);
           return;
         }
         if (Date.now() > pending.nonceExpiresAtMs) {
@@ -672,25 +692,101 @@ export class Hyperchat {
 
   logIgnoredWalletBridgeResponse(reason, response) {
     if (isTestEnv) return;
-    console.warn(`Ignoring wallet bridge response: ${reason}`, {
+    console.warn('wallet_bridge.response_ignored', {
+      event: 'wallet_bridge.response_ignored',
+      reason,
       type: response?.type,
       id: response?.id,
       nonce: response?.nonce,
+      channelSessionId: response?.channelSessionId,
     });
   }
 
   _initWalletBridgeAuth() {
-    if (window.DISABLE_WALLET_BRIDGE) return '';
     if (!this.walletBridgeAuthToken) {
       this.walletBridgeAuthToken = this.createBridgeAuthToken();
     }
-    const initId = Date.now() + Math.random();
-    window.postMessage({
-      type: 'HL_BRIDGE_AUTH_INIT',
-      id: initId,
-      authToken: this.walletBridgeAuthToken,
-    }, '*');
     return this.walletBridgeAuthToken;
+  }
+
+  async _ensureWalletBridgeChannel() {
+    const authToken = this._initWalletBridgeAuth();
+    const now = Date.now();
+    if (this.walletBridgeChannelSessionId && now < this.walletBridgeChannelExpiresAtMs) {
+      return {
+        authToken,
+        channelSessionId: this.walletBridgeChannelSessionId,
+        channelIssuedAtMs: this.walletBridgeChannelIssuedAtMs,
+        channelExpiresAtMs: this.walletBridgeChannelExpiresAtMs,
+      };
+    }
+    if (!this.walletBridgeBootstrapPromise) {
+      this.walletBridgeBootstrapPromise = this._bootstrapWalletBridgeChannel(authToken)
+        .finally(() => {
+          this.walletBridgeBootstrapPromise = null;
+        });
+    }
+    try {
+      await this.walletBridgeBootstrapPromise;
+    } catch (error) {
+      if (!isTestEnv) {
+        console.warn('wallet_bridge.bootstrap_failed', {
+          event: 'wallet_bridge.bootstrap_failed',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      throw error;
+    }
+    return {
+      authToken,
+      channelSessionId: this.walletBridgeChannelSessionId,
+      channelIssuedAtMs: this.walletBridgeChannelIssuedAtMs,
+      channelExpiresAtMs: this.walletBridgeChannelExpiresAtMs,
+    };
+  }
+
+  _bootstrapWalletBridgeChannel(authToken) {
+    const id = Date.now() + Math.random();
+    const channelIssuedAtMs = Date.now();
+    const channelExpiresAtMs = channelIssuedAtMs + this.walletBridgeChannelTtlMs;
+    const channelSessionId = this.createBridgeChannelSessionId();
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        window.removeEventListener('message', handler);
+        reject(new Error('Wallet bridge bootstrap timed out'));
+      }, this.walletBridgeRequestTimeoutMs);
+      const handler = (event) => {
+        if (event.source !== window || !event.data || event.data.type !== 'HL_BRIDGE_BOOTSTRAP_RESPONSE' || event.data.id !== id) return;
+        window.removeEventListener('message', handler);
+        clearTimeout(timeoutId);
+        if (event.data.error) {
+          reject(new Error(event.data.error));
+          return;
+        }
+        if (event.data.channelSessionId !== channelSessionId) {
+          reject(new Error('Wallet bridge bootstrap channel mismatch'));
+          return;
+        }
+        const effectiveExpiresAtMs = Number(event.data.channelExpiresAtMs || channelExpiresAtMs);
+        if (!Number.isFinite(effectiveExpiresAtMs) || effectiveExpiresAtMs <= Date.now()) {
+          reject(new Error('Wallet bridge bootstrap expired'));
+          return;
+        }
+        this.walletBridgeChannelSessionId = channelSessionId;
+        this.walletBridgeChannelIssuedAtMs = channelIssuedAtMs;
+        this.walletBridgeChannelExpiresAtMs = Math.min(effectiveExpiresAtMs, channelExpiresAtMs);
+        resolve();
+      };
+      window.addEventListener('message', handler);
+      window.postMessage({
+        type: 'HL_BRIDGE_BOOTSTRAP_REQUEST',
+        id,
+        authToken,
+        channelSessionId,
+        channelIssuedAtMs,
+        channelExpiresAtMs,
+      }, '*');
+    });
   }
 
   createBridgeAuthToken() {
@@ -705,6 +801,15 @@ export class Hyperchat {
   createBridgeNonce() {
     if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
       const bytes = new Uint8Array(12);
+      window.crypto.getRandomValues(bytes);
+      return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    }
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  createBridgeChannelSessionId() {
+    if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16);
       window.crypto.getRandomValues(bytes);
       return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
     }

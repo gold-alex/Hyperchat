@@ -1,10 +1,13 @@
 // Wallet bridge script - runs in page context to access window.ethereum
 (function() {
   let bridgeAuthToken = null;
+  let activeBridgeChannel = null;
   const consumedNonces = new Map();
   const NONCE_MAX_AGE_MS = 15000;
   const NONCE_MAX_TTL_MS = 30000;
   const NONCE_CACHE_MAX = 2000;
+  const CHANNEL_MAX_AGE_MS = 15000;
+  const CHANNEL_MAX_TTL_MS = 60000;
 
   /**
    * Returns the most appropriate EIP-1193 provider.
@@ -34,11 +37,27 @@
     return ethereum;
   }
 
-  function postAuthError(responseType, id, nonce, message) {
+  function logBridgeEvent(level, event, details = {}) {
+    if (typeof console?.[level] !== 'function') return;
+    console[level]('wallet_bridge.event', {
+      event,
+      ...details,
+    });
+  }
+
+  function postAuthError(responseType, id, nonce, channelSessionId, message) {
+    logBridgeEvent('warn', 'wallet_bridge.reject', {
+      responseType,
+      id,
+      nonce,
+      channelSessionId,
+      reason: message || 'Bridge authentication failed',
+    });
     window.postMessage({
       type: responseType,
       id,
       nonce,
+      channelSessionId,
       error: message || 'Bridge authentication failed',
     }, '*');
   }
@@ -52,6 +71,10 @@
   }
 
   function isValidBridgeNonce(value) {
+    return typeof value === 'string' && value.trim().length >= 12;
+  }
+
+  function isValidBridgeChannelSessionId(value) {
     return typeof value === 'string' && value.trim().length >= 12;
   }
 
@@ -91,6 +114,43 @@
     return { ok: true, nonce };
   }
 
+  function getNowMs() {
+    return Date.now();
+  }
+
+  function pruneBridgeChannel(nowMs) {
+    if (activeBridgeChannel && activeBridgeChannel.expiresAtMs <= nowMs) {
+      activeBridgeChannel = null;
+    }
+  }
+
+  function validateBridgeChannel(data) {
+    const nowMs = getNowMs();
+    pruneBridgeChannel(nowMs);
+    if (!activeBridgeChannel) {
+      return { ok: false, error: 'Bridge channel not established' };
+    }
+    if (!isValidBridgeChannelSessionId(data?.channelSessionId)) {
+      return { ok: false, error: 'Bridge channel missing or invalid' };
+    }
+    if (data.channelSessionId !== activeBridgeChannel.sessionId) {
+      return { ok: false, error: 'Bridge channel session mismatch' };
+    }
+    if (!isFiniteNumber(data?.channelIssuedAtMs) || !isFiniteNumber(data?.channelExpiresAtMs)) {
+      return { ok: false, error: 'Bridge channel missing or invalid' };
+    }
+    if (data.channelExpiresAtMs <= data.channelIssuedAtMs || (data.channelExpiresAtMs - data.channelIssuedAtMs) > CHANNEL_MAX_TTL_MS) {
+      return { ok: false, error: 'Bridge channel missing or invalid' };
+    }
+    if ((nowMs - data.channelIssuedAtMs) > CHANNEL_MAX_AGE_MS || nowMs > data.channelExpiresAtMs) {
+      return { ok: false, error: 'Bridge channel expired' };
+    }
+    if (data.channelExpiresAtMs > activeBridgeChannel.expiresAtMs) {
+      return { ok: false, error: 'Bridge channel session mismatch' };
+    }
+    return { ok: true };
+  }
+
   // Listen for wallet connection requests from content script
   window.addEventListener('message', async (event) => {
     if (event.source !== window || !event.data) return;
@@ -124,15 +184,81 @@
       return;
     }
 
+    if (event.data.type === 'HL_BRIDGE_BOOTSTRAP_REQUEST') {
+      const requestedToken = event.data.authToken;
+      if (!isValidAuthToken(requestedToken)) {
+        window.postMessage({
+          type: 'HL_BRIDGE_BOOTSTRAP_RESPONSE',
+          id: event.data.id,
+          channelSessionId: event.data.channelSessionId,
+          error: 'Invalid bridge auth token',
+        }, '*');
+        return;
+      }
+      if (bridgeAuthToken && bridgeAuthToken !== requestedToken) {
+        window.postMessage({
+          type: 'HL_BRIDGE_BOOTSTRAP_RESPONSE',
+          id: event.data.id,
+          channelSessionId: event.data.channelSessionId,
+          error: 'Bridge auth token mismatch',
+        }, '*');
+        return;
+      }
+      const nowMs = getNowMs();
+      const channelSessionId = event.data.channelSessionId;
+      const channelIssuedAtMs = event.data.channelIssuedAtMs;
+      const channelExpiresAtMs = event.data.channelExpiresAtMs;
+      if (
+        !isValidBridgeChannelSessionId(channelSessionId)
+        || !isFiniteNumber(channelIssuedAtMs)
+        || !isFiniteNumber(channelExpiresAtMs)
+        || channelExpiresAtMs <= channelIssuedAtMs
+        || (channelExpiresAtMs - channelIssuedAtMs) > CHANNEL_MAX_TTL_MS
+        || (nowMs - channelIssuedAtMs) > CHANNEL_MAX_AGE_MS
+        || nowMs > channelExpiresAtMs
+      ) {
+        window.postMessage({
+          type: 'HL_BRIDGE_BOOTSTRAP_RESPONSE',
+          id: event.data.id,
+          channelSessionId,
+          error: 'Bridge channel missing or invalid',
+        }, '*');
+        return;
+      }
+      bridgeAuthToken = requestedToken;
+      activeBridgeChannel = {
+        sessionId: channelSessionId,
+        expiresAtMs: channelExpiresAtMs,
+      };
+      logBridgeEvent('info', 'wallet_bridge.bootstrap_ready', {
+        channelSessionId,
+        channelExpiresAtMs,
+      });
+      window.postMessage({
+        type: 'HL_BRIDGE_BOOTSTRAP_RESPONSE',
+        id: event.data.id,
+        ok: true,
+        channelSessionId,
+        channelExpiresAtMs,
+      }, '*');
+      return;
+    }
+
     if (event.data.type === 'HL_CONNECT_WALLET_REQUEST') {
       if (!bridgeAuthToken || event.data.authToken !== bridgeAuthToken) {
-        postAuthError('HL_CONNECT_WALLET_RESPONSE', event.data.id, event.data.nonce, 'Bridge authentication failed');
+        postAuthError('HL_CONNECT_WALLET_RESPONSE', event.data.id, event.data.nonce, event.data.channelSessionId, 'Bridge authentication failed');
+        return;
+      }
+
+      const channelState = validateBridgeChannel(event.data);
+      if (!channelState.ok) {
+        postAuthError('HL_CONNECT_WALLET_RESPONSE', event.data.id, event.data.nonce, event.data.channelSessionId, channelState.error);
         return;
       }
 
       const nonceState = validateAndConsumeNonce(event.data);
       if (!nonceState.ok) {
-        postAuthError('HL_CONNECT_WALLET_RESPONSE', event.data.id, nonceState.nonce, nonceState.error);
+        postAuthError('HL_CONNECT_WALLET_RESPONSE', event.data.id, nonceState.nonce, event.data.channelSessionId, nonceState.error);
         return;
       }
       try {
@@ -153,6 +279,7 @@
           type: 'HL_CONNECT_WALLET_RESPONSE',
           id: event.data.id,
           nonce: event.data.nonce,
+          channelSessionId: event.data.channelSessionId,
           accounts: accounts
         }, '*');
 
@@ -161,6 +288,7 @@
           type: 'HL_CONNECT_WALLET_RESPONSE',
           id: event.data.id,
           nonce: event.data.nonce,
+          channelSessionId: event.data.channelSessionId,
           error: error.message
         }, '*');
       }
@@ -168,13 +296,19 @@
 
     if (event.data.type === 'HL_SIGN_REQUEST') {
       if (!bridgeAuthToken || event.data.authToken !== bridgeAuthToken) {
-        postAuthError('HL_SIGN_RESPONSE', event.data.id, event.data.nonce, 'Bridge authentication failed');
+        postAuthError('HL_SIGN_RESPONSE', event.data.id, event.data.nonce, event.data.channelSessionId, 'Bridge authentication failed');
+        return;
+      }
+
+      const channelState = validateBridgeChannel(event.data);
+      if (!channelState.ok) {
+        postAuthError('HL_SIGN_RESPONSE', event.data.id, event.data.nonce, event.data.channelSessionId, channelState.error);
         return;
       }
 
       const nonceState = validateAndConsumeNonce(event.data);
       if (!nonceState.ok) {
-        postAuthError('HL_SIGN_RESPONSE', event.data.id, nonceState.nonce, nonceState.error);
+        postAuthError('HL_SIGN_RESPONSE', event.data.id, nonceState.nonce, event.data.channelSessionId, nonceState.error);
         return;
       }
       try {
@@ -212,6 +346,7 @@
           type: 'HL_SIGN_RESPONSE',
           id: event.data.id,
           nonce: event.data.nonce,
+          channelSessionId: event.data.channelSessionId,
           signature: signature
         }, '*');
 
@@ -220,6 +355,7 @@
           type: 'HL_SIGN_RESPONSE',
           id: event.data.id,
           nonce: event.data.nonce,
+          channelSessionId: event.data.channelSessionId,
           error: error.message
         }, '*');
       }
