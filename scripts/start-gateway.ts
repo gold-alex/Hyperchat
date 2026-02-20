@@ -1,4 +1,5 @@
 import { createGatewayServer } from '../src/waku/gateway/server';
+import { evaluateGatewaySiweStartupPolicy } from '../src/waku/gateway/startup-policy';
 
 function parseList(value?: string) {
   if (!value) return undefined;
@@ -63,17 +64,36 @@ const maxSiweClockSkewMs = parseNumber(process.env.LP_MAX_SIWE_SKEW_MS ?? proces
 const allowInsecureSiweEnv = parseBoolean(process.env.LP_ALLOW_INSECURE_SIWE_ENV) === true;
 const expectedDomain = process.env.LP_DOMAIN ?? process.env.LP_EXPECTED_DOMAIN;
 const expectedChainId = parseNumber(process.env.LP_CHAIN_ID);
+const deploymentContextRaw = process.env.LP_DEPLOYMENT_CONTEXT;
+const nodeEnvRaw = process.env.NODE_ENV;
+const ciRaw = process.env.CI;
 
-if (!allowInsecureSiweEnv) {
-  if (!expectedDomain) {
-    console.error('Missing required env var: LP_DOMAIN (or LP_EXPECTED_DOMAIN)');
-    process.exit(1);
+const policy = evaluateGatewaySiweStartupPolicy({
+  allowInsecureSiweEnv,
+  expectedDomain,
+  expectedChainId,
+  deploymentContextRaw,
+  nodeEnvRaw,
+  ciRaw,
+});
+
+if (!policy.ok) {
+  for (const violation of policy.violations) {
+    console.error(
+      JSON.stringify({
+        event: 'gateway.startup_policy_violation',
+        code: violation.code,
+        policy: violation.policy,
+        message: violation.message,
+        remediation: violation.remediation,
+        details: violation.details,
+      }),
+    );
   }
-  if (expectedChainId === undefined) {
-    console.error('Missing required env var: LP_CHAIN_ID');
-    process.exit(1);
-  }
-} else {
+  process.exit(1);
+}
+
+if (allowInsecureSiweEnv) {
   console.warn(
     '[SECURITY] LP_ALLOW_INSECURE_SIWE_ENV=true: domain/chain SIWE enforcement may be relaxed. Use only for local development.',
   );
@@ -122,6 +142,7 @@ app.listen(port, () => {
   if (config.expectedDomain) console.log(`  expectedDomain: ${config.expectedDomain}`);
   if (config.expectedChainId !== undefined) console.log(`  expectedChainId: ${config.expectedChainId}`);
   if (config.allowInsecureSiweEnv) console.log('  allowInsecureSiweEnv: true');
+  console.log(`  deploymentContext: ${policy.context} (${policy.contextSource})`);
   if (config.publishTransport) console.log(`  publishTransport: ${config.publishTransport}`);
   if (config.lightpushWsUrl) console.log(`  lightpushWsUrl: ${config.lightpushWsUrl}`);
   if (config.lightpushPeerId) console.log(`  lightpushPeerId: ${config.lightpushPeerId}`);

@@ -20,6 +20,7 @@
     "nwaku:debug": "node scripts/nwaku-debug.js",
     "nwaku:seed": "node scripts/nwaku-seed.js",
     "gateway:start": "tsx scripts/start-gateway.ts",
+    "gateway:policy-check": "tsx scripts/check-gateway-security-config.ts",
     "gateway:smoke": "tsx scripts/gateway-session-message-smoke-test.ts"
   },
   "dependencies": {
