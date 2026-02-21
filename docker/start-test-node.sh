@@ -13,7 +13,16 @@ mkdir -p "$HOST_WAKU_DB_DIR" "$HOST_WAKU_RELAY_DB_DIR"
 
 cd "$SCRIPT_DIR"
 
-echo "Starting dual-nwaku test stack via docker-compose..."
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE=(docker-compose)
+else
+    echo "Error: neither 'docker compose' nor 'docker-compose' is available."
+    exit 1
+fi
+
+echo "Starting dual-nwaku test stack via: ${COMPOSE[*]}"
 echo ""
 
 PRIMARY_RUNNING=false
@@ -33,12 +42,23 @@ if $PRIMARY_RUNNING || $RELAY_RUNNING; then
     read -p "   Restart both? (y/n) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        docker-compose stop nwaku-relay nwaku || true
-        docker-compose rm -f nwaku-relay nwaku || true
+        "${COMPOSE[@]}" stop nwaku-relay nwaku || true
+        "${COMPOSE[@]}" rm -f nwaku-relay nwaku || true
     else
         echo "! Leaving containers untouched."
         exit 0
     fi
+fi
+
+# Clean up stale project-prefixed nwaku containers left by older compose tooling.
+STALE_CONTAINERS=$(docker ps -a --format '{{.Names}}' | grep -E '^[^[:space:]]+_nwaku-(node|relay)$' || true)
+if [ -n "$STALE_CONTAINERS" ]; then
+    echo "! Removing stale nwaku containers from legacy compose runs:"
+    echo "$STALE_CONTAINERS" | sed 's/^/   - /'
+    while IFS= read -r stale_name; do
+        [ -n "$stale_name" ] || continue
+        docker rm -f "$stale_name" >/dev/null 2>&1 || true
+    done <<< "$STALE_CONTAINERS"
 fi
 
 # Ensure we're using test configuration
@@ -57,7 +77,7 @@ export WAKU_WSS_DOMAIN=localhost
 
 # Compute host DB path for convenience (works regardless of cwd)
 # Start the primary LightPush/Filter/Store node
-docker-compose up -d nwaku
+"${COMPOSE[@]}" up -d nwaku
 
 echo "Waiting for node to start..."
 sleep 5
@@ -87,7 +107,7 @@ fi
 # Start the upstream relay peer
 echo ""
 echo "Starting helper relay peer (nwaku-relay)..."
-docker-compose up -d nwaku-relay
+"${COMPOSE[@]}" up -d nwaku-relay
 echo "Waiting for relay to start..."
 sleep 5
 RELAY_PEER_ID=$(curl -s http://localhost:${WAKU_RELAY_REST_PORT}/debug/v1/info 2>/dev/null | grep -oP '"listenAddresses":\["[^"]*/p2p/\K[^"]+' | head -1)
@@ -119,12 +139,12 @@ if [ -n "$PEER_ID" ]; then
     echo "Useful commands:"
     echo "   View primary logs:  docker logs -f nwaku-node"
     echo "   View relay logs:    docker logs -f nwaku-relay"
-    echo "   Stop stack:         docker-compose stop"
-    echo "   Remove stack:       docker-compose down"
-    echo "   Restart primary:    docker-compose restart nwaku"
-    echo "   Restart relay:      docker-compose restart nwaku-relay"
+    echo "   Stop stack:         ${COMPOSE[*]} stop"
+    echo "   Remove stack:       ${COMPOSE[*]} down"
+    echo "   Restart primary:    ${COMPOSE[*]} restart nwaku"
+    echo "   Restart relay:      ${COMPOSE[*]} restart nwaku-relay"
     echo "   Check DB (sqlite sidecar):"
-    echo "                  docker-compose run --rm sqlite /db/waku_messages.db 'SELECT COUNT(*) FROM messages;'"
+    echo "                  ${COMPOSE[*]} run --rm sqlite /db/waku_messages.db 'SELECT COUNT(*) FROM messages;'"
     echo "   Alt: host sqlite3:"
     echo "                  sqlite3 '$HOST_WAKU_DB_DIR/waku_messages.db' 'SELECT COUNT(*) FROM messages;'"
     echo "   REST info:     curl http://localhost:8645/debug/v1/info | jq"

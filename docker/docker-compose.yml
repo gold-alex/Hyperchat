@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   nwaku:
     image: wakuorg/nwaku:v0.36.0
