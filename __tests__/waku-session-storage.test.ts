@@ -111,6 +111,74 @@ describe('WakuChatClient session persistence', () => {
     expect(area.remove).toHaveBeenCalledWith(SESSION_STORAGE_KEY, expect.any(Function));
   });
 
+  it('invalidates persisted session when gateway endpoint changes between client instances', async () => {
+    const { area, data } = createStorageSessionArea();
+    (globalThis as any).chrome.storage.session = area;
+
+    const WakuChatClient = await loadClientClass();
+    const oldGateway = 'http://localhost:8787';
+    const newGateway = 'https://gw-b.example';
+
+    const warmClient = new WakuChatClient({ gatewayUrl: oldGateway });
+    await warmClient._saveSessionToStorage(buildSession({ gatewayUrl: oldGateway }));
+
+    const client = new WakuChatClient({
+      gatewayUrl: newGateway,
+      signMessage: vi.fn().mockResolvedValue('0xmocked-signature'),
+    });
+    client.setWalletInfo('0x1234567890123456789012345678901234567890');
+    client.setRoom('BTC-USD', 'Perps');
+    client._gatewayRequest = vi.fn(async (path: string) => {
+      if (path === '/session') {
+        return {
+          sessionId: 'fresh-session-after-gateway-change',
+          expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        };
+      }
+      throw new Error(`Unexpected path: ${path}`);
+    });
+
+    const session = await client._ensureSession();
+    expect(session.sessionId).toBe('fresh-session-after-gateway-change');
+    expect(client._gatewayRequest).toHaveBeenCalledTimes(1);
+    expect(area.remove).toHaveBeenCalledWith(SESSION_STORAGE_KEY, expect.any(Function));
+    const persisted = (data[SESSION_STORAGE_KEY] as any)?.session;
+    expect(persisted?.gatewayUrl).toBe(newGateway);
+  });
+
+  it('invalidates in-memory session when gateway endpoint changes at runtime', async () => {
+    const { area } = createStorageSessionArea();
+    (globalThis as any).chrome.storage.session = area;
+
+    const WakuChatClient = await loadClientClass();
+    const client = new WakuChatClient({
+      gatewayUrl: 'http://localhost:8787',
+      signMessage: vi.fn().mockResolvedValue('0xmocked-signature'),
+    });
+    client.setWalletInfo('0x1234567890123456789012345678901234567890');
+    client.setRoom('BTC-USD', 'Perps');
+    client.session = buildSession({
+      sessionId: 'old-in-memory-session',
+      gatewayUrl: 'http://localhost:8787',
+    });
+
+    client.gatewayUrl = 'https://gw-c.example';
+    client.gatewayDomain = 'gw-c.example';
+    client._gatewayRequest = vi.fn(async (path: string) => {
+      if (path === '/session') {
+        return {
+          sessionId: 'fresh-after-runtime-gateway-change',
+          expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        };
+      }
+      throw new Error(`Unexpected path: ${path}`);
+    });
+
+    const session = await client._ensureSession();
+    expect(session.sessionId).toBe('fresh-after-runtime-gateway-change');
+    expect(client._gatewayRequest).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back to in-memory session flow when chrome.storage.session is unavailable', async () => {
     const WakuChatClient = await loadClientClass();
     delete (globalThis as any).chrome.storage.session;

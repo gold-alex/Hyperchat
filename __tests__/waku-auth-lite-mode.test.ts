@@ -71,4 +71,45 @@ describe('WakuChatClient auth-lite mode enforcement', () => {
     expect(legacySpy).toHaveBeenCalledWith('legacy hello', '0xsig');
     expect(gatewaySpy).not.toHaveBeenCalled();
   });
+
+  it('derives SIWE domain from gateway URL by default', async () => {
+    const WakuChatClient = await loadClientClass();
+    const client = new WakuChatClient({
+      gatewayUrl: 'https://gw-a.example/path',
+    });
+    expect(client.gatewayDomain).toBe('gw-a.example');
+  });
+
+  it('rejects non-dev gateway domain override when it mismatches gateway URL host', async () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const WakuChatClient = await loadClientClass();
+      expect(
+        () =>
+          new WakuChatClient({
+            gatewayUrl: 'https://gw-a.example',
+            gatewayDomain: 'gw-b.example',
+          }),
+      ).toThrow(/requires SIWE domain to match selected gateway hostname/);
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+  });
+
+  it('allows gateway domain override when explicitly enabled for development', async () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const WakuChatClient = await loadClientClass();
+      const client = new WakuChatClient({
+        gatewayUrl: 'https://gw-a.example',
+        gatewayDomain: 'gw-b.example',
+        allowGatewayDomainOverride: true,
+      });
+      expect(client.gatewayDomain).toBe('gw-b.example');
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+  });
 });
