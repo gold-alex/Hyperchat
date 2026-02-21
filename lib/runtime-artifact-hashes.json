@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "algorithm": "sha256",
+  "trackedPattern": "lib/*.js",
+  "refreshCommand": "pnpm runtime-artifacts:hash:update",
+  "verifyCommand": "pnpm runtime-artifacts:hash:verify",
+  "entries": [
+    {
+      "path": "lib/chat-message.js",
+      "sha256": "2b088f8344da22582f72bd466cac1245f0e4ec06166f044bd43cc5ec77ccf21a"
+    },
+    {
+      "path": "lib/js-waku.min.js",
+      "sha256": "0d6462e67ada2b804f7ba8dd48d4047ea5602518c37e95d612facb9e1d61712a"
+    },
+    {
+      "path": "lib/noble-secp256k1.js",
+      "sha256": "8ba6138826758ef7d13243f18f7fbf8b26c81c6abea706e692baa83dfe3827e1"
+    },
+    {
+      "path": "lib/protobuf-wrapper.js",
+      "sha256": "1cecc7bf74bc53980da26e0714855718ce26662deb14e2d9f35aa8090438743d"
+    },
+    {
+      "path": "lib/waku-chat-client.js",
+      "sha256": "6c6f7781b2d727bfcbfbc1ca71396c5831b0866841fd2c2d422bc0c64b875e17"
+    },
+    {
+      "path": "lib/waku-receiver-filter.js",
+      "sha256": "772d87716174044be504550e9549e699c4f9e4709f1530a6c07366a58334b7af"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+name: Runtime Artifact Hash Gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  runtime-artifact-hash-verify:
+    name: Runtime Artifact Hash Verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify runtime artifact hash manifest
+        run: pnpm runtime-artifacts:hash:verify

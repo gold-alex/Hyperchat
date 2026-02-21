@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "verifyCommand": "pnpm generated-artifacts:verify",
+  "regenerateCommand": "pnpm generated-artifacts:regenerate",
+  "contracts": [
+    {
+      "name": "protobuf-chat-message-runtime",
+      "inputs": [
+        "lib/chat-message.proto",
+        "scripts/postprocess-proto.js",
+        "package.json"
+      ],
+      "outputs": [
+        "lib/chat-message.js"
+      ],
+      "command": "pnpm build:proto"
+    }
+  ]
+}
