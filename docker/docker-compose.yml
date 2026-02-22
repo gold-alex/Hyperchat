@@ -87,6 +87,7 @@ services:
     environment:
       # Inside Docker, gateway must dial the nwaku service over the compose network.
       - LP_RPC_HTTP=http://nwaku:8645
+      - LP_WAKU_BOOTSTRAP_PEERS=/dns4/nwaku/tcp/8000/ws/p2p/${PRIMARY_WAKU_PEER_ID:?Set PRIMARY_WAKU_PEER_ID in docker/.env}
       - LP_WAKU_WS_URL=ws://nwaku:8000
       - LP_WAKU_PEER_ID=${PRIMARY_WAKU_PEER_ID:?Set PRIMARY_WAKU_PEER_ID in docker/.env}
 

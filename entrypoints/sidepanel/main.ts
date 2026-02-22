@@ -39,6 +39,7 @@ async function initializeWaku() {
         ? parseInt(env.VITE_WAKU_NODE_PORT, 10)
         : (env.VITE_WAKU_NODE_PORT || 443),
       wakuNodePeerId: env.VITE_WAKU_NODE_PEER_ID || 'PEER_ID',
+      wakuBootstrapPeers: env.VITE_WAKU_BOOTSTRAP_PEERS || '',
       gatewayUrl: env.VITE_LIGHTPUSH_GATEWAY_URL || '',
       useLegacyProto,
       onMessageReceived: (message: any) => { handleNewMessage(message); },

@@ -61,4 +61,46 @@ describe('WakuChatClient transport policy', () => {
 
     expect(client._resolveWakuTransport()).toMatchObject({ isLocal: false, wsProto: 'wss' });
   });
+
+  it('uses bootstrap peer list in preference to legacy single-peer env', async () => {
+    const WakuChatClient = await loadClientClass();
+    const client = new WakuChatClient({
+      wakuNodeURI: 'legacy.example.com',
+      wakuNodePort: 443,
+      wakuNodePeerId: '16Uiu2HAmLegacy',
+      wakuBootstrapPeers: '/dns4/nwaku-a.example.com/tcp/443/wss/p2p/16Uiu2HAmListA',
+    });
+
+    const peers = client._resolveBootstrapPeers();
+    expect(peers).toHaveLength(1);
+    expect(peers[0].peerId).toBe('16Uiu2HAmListA');
+  });
+
+  it('rejects insecure non-local ws bootstrap list entries', async () => {
+    const WakuChatClient = await loadClientClass();
+    const client = new WakuChatClient({
+      wakuBootstrapPeers: '/dns4/nwaku.example.com/tcp/8000/ws/p2p/16Uiu2HAmBad',
+    });
+
+    let thrown: any;
+    try {
+      client._resolveBootstrapPeers();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown?.code).toBe('BOOTSTRAP_PEERLIST_INVALID');
+    expect(thrown?.message).toMatch(/insecure websocket transport/i);
+  });
+
+  it('keeps ws compatibility for single-label local bootstrap hosts', async () => {
+    const WakuChatClient = await loadClientClass();
+    const client = new WakuChatClient({
+      wakuBootstrapPeers: '/dns4/nwaku/tcp/8000/ws/p2p/16Uiu2HAmDockerLocal',
+    });
+
+    const peers = client._resolveBootstrapPeers();
+    expect(peers).toHaveLength(1);
+    expect(peers[0].transport).toBe('ws');
+  });
 });

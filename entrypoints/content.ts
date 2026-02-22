@@ -10,6 +10,7 @@ export default defineContentScript({
     const WAKU_NODE_URI = env.VITE_WAKU_NODE_URI || 'localhost';
     const WAKU_NODE_PORT = Number(env.VITE_WAKU_NODE_PORT) || 443;
     const WAKU_NODE_PEER_ID = env.VITE_WAKU_NODE_PEER_ID || 'PEER_ID';
+    const WAKU_BOOTSTRAP_PEERS = env.VITE_WAKU_BOOTSTRAP_PEERS || '';
     const GATEWAY_URL = env.VITE_LIGHTPUSH_GATEWAY_URL || '';
     const USE_LEGACY_PROTO = env.VITE_WAKU_USE_LEGACY_PROTO === 'true';
     const HLNAMES_API_KEY = env.VITE_HLNAMES_API_KEY || '';
@@ -29,6 +30,7 @@ export default defineContentScript({
           wakuNodeURI: WAKU_NODE_URI,
           wakuNodePort: WAKU_NODE_PORT as any,
           wakuNodePeerId: WAKU_NODE_PEER_ID,
+          wakuBootstrapPeers: WAKU_BOOTSTRAP_PEERS,
           gatewayUrl: GATEWAY_URL,
           useLegacyProto: USE_LEGACY_PROTO,
           onMessageReceived: (message: any) => { if (chatInstance) chatInstance.handleNewMessage(message); },

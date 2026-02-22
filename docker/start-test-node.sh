@@ -157,6 +157,11 @@ else
 fi
 
 if [ -n "$PEER_ID" ]; then
+    PRIMARY_BOOTSTRAP_MA="/dns4/localhost/tcp/${WAKU_WS_PORT}/ws/p2p/${PEER_ID}"
+    RELAY_BOOTSTRAP_MA=""
+    if [ -n "$RELAY_PEER_ID" ]; then
+        RELAY_BOOTSTRAP_MA="/dns4/localhost/tcp/${WAKU_RELAY_WS_PORT}/ws/p2p/${RELAY_PEER_ID}"
+    fi
     echo "   Peer ID:    ${PEER_ID}"
     echo ""
     if $WITH_GATEWAY; then
@@ -173,9 +178,14 @@ if [ -n "$PEER_ID" ]; then
     echo "VITE_WAKU_NODE_URI=localhost"
     echo "VITE_WAKU_NODE_PORT=8000"
     echo "VITE_WAKU_NODE_PEER_ID=${PEER_ID}"
+    echo "VITE_WAKU_BOOTSTRAP_PEERS=${PRIMARY_BOOTSTRAP_MA}"
     echo "PRIMARY_WAKU_PEER_ID=${PEER_ID}"
+    echo "LP_WAKU_BOOTSTRAP_PEERS=${PRIMARY_BOOTSTRAP_MA}"
     if [ -n "$RELAY_PEER_ID" ]; then
         echo "WAKU_RELAY_PEER_ID=${RELAY_PEER_ID}"
+    fi
+    if [ -n "$RELAY_BOOTSTRAP_MA" ]; then
+        echo "# Relay-only bootstrap (no Filter/LightPush): ${RELAY_BOOTSTRAP_MA}"
     fi
     echo ""
     echo "Useful commands:"

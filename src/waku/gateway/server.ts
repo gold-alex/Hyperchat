@@ -10,11 +10,16 @@ import {
   verifyEnvelope,
   verifySiweAuthorization,
 } from '../auth/session';
+import {
+  buildLegacyBootstrapPeerFromWsUrl,
+  parseBootstrapPeerList,
+} from '../../../lib/bootstrap-peer-config.js';
 
 export interface GatewayConfig {
   rpcUrl: string;
   balanceRpcUrl?: string;
   publishTransport?: 'auto' | 'rpc' | 'lightpush';
+  lightpushBootstrapPeers?: string[] | string;
   lightpushPeerId?: string;
   lightpushWsUrl?: string;
   lightpushConnectTimeoutMs?: number;
@@ -366,8 +371,12 @@ export function createGatewayServer(config: GatewayConfig) {
     onEviction: (reason, count) => metrics.incrementStoreEviction('balance_cache', reason, count),
   });
   const publishToWaku = createMessagePublisher(config);
+  const hasLightpushConfig =
+    (typeof config.lightpushBootstrapPeers === 'string' && config.lightpushBootstrapPeers.trim().length > 0)
+    || (Array.isArray(config.lightpushBootstrapPeers) && config.lightpushBootstrapPeers.length > 0)
+    || Boolean(config.lightpushPeerId);
   const defaultPublishTransport: PublishTransport =
-    config.publishTransport === 'rpc' ? 'rpc' : config.lightpushPeerId ? 'lightpush' : 'rpc';
+    config.publishTransport === 'rpc' ? 'rpc' : hasLightpushConfig ? 'lightpush' : 'rpc';
   const app = express();
   app.use(express.json({ limit: bodyLimit }));
 
@@ -770,25 +779,42 @@ type PublishParams = {
   pubsubTopic: string;
 };
 
+type LightpushBootstrapPeer = {
+  multiaddr: string;
+  wsUrl: string;
+  peerId: string;
+  isLocalHost: boolean;
+};
+
+type LightpushContext = {
+  node: any;
+  waitForRemotePeer: (node: unknown, protocols: unknown[], timeoutMs?: number) => Promise<unknown>;
+  protocols: { LightPush: unknown };
+  connectedPubsubTopics: Set<string>;
+};
+
 function createMessagePublisher(config: GatewayConfig) {
   const transport = config.publishTransport ?? 'auto';
   if (transport === 'rpc') {
     return createRpcPublisher(config.rpcUrl);
   }
 
-  const peerId = config.lightpushPeerId;
-  if (!peerId) {
+  const peers = resolveGatewayLightpushBootstrapPeers(config);
+  if (peers.length === 0) {
     if (transport === 'lightpush') {
-      throw new Error('lightpush transport requires lightpushPeerId (LP_WAKU_PEER_ID or PRIMARY_WAKU_PEER_ID)');
+      throw new Error(
+        'lightpush transport requires LP_WAKU_BOOTSTRAP_PEERS or LP_WAKU_PEER_ID/LP_WAKU_WS_URL legacy config',
+      );
     }
-    // Auto mode falls back to RPC when no LightPush peer is configured.
+    // Auto mode falls back to RPC when no LightPush bootstrap peers are configured.
     return createRpcPublisher(config.rpcUrl);
   }
+  console.info(
+    `[gateway] configured LightPush bootstrap peers (${peers.length}): ${peers.map((peer) => peer.multiaddr).join(', ')}`,
+  );
 
-  const wsUrl = config.lightpushWsUrl ?? deriveLightpushWsUrl(config.rpcUrl);
   return createLightpushPublisher({
-    peerId,
-    wsUrl,
+    peers,
     connectTimeoutMs: config.lightpushConnectTimeoutMs,
     rpcFallback: transport === 'auto' ? createRpcPublisher(config.rpcUrl) : undefined,
   });
@@ -831,63 +857,138 @@ function deriveLightpushWsUrl(rpcUrl: string) {
   return `${wsProtocol}//${parsed.hostname}:8000`;
 }
 
+function resolveGatewayLightpushBootstrapPeers(config: GatewayConfig): LightpushBootstrapPeer[] {
+  const contextLabel = 'Gateway LightPush bootstrap peers';
+  const configuredList = parseBootstrapPeerList(config.lightpushBootstrapPeers ?? '', { contextLabel });
+  if (configuredList.length > 0) {
+    return configuredList.map((peer) => ({
+      multiaddr: peer.multiaddr,
+      wsUrl: peer.wsUrl,
+      peerId: peer.peerId,
+      isLocalHost: peer.isLocalHost,
+    }));
+  }
+
+  const legacyPeerId = config.lightpushPeerId;
+  if (!legacyPeerId) {
+    return [];
+  }
+
+  const legacyWsUrl = config.lightpushWsUrl ?? deriveLightpushWsUrl(config.rpcUrl);
+  const legacyPeer = buildLegacyBootstrapPeerFromWsUrl({
+    contextLabel: `${contextLabel} (legacy fallback)`,
+    wsUrl: legacyWsUrl,
+    peerId: legacyPeerId,
+  });
+  return [{
+    multiaddr: legacyPeer.multiaddr,
+    wsUrl: legacyPeer.wsUrl,
+    peerId: legacyPeer.peerId,
+    isLocalHost: legacyPeer.isLocalHost,
+  }];
+}
+
 function createLightpushPublisher(options: {
-  peerId: string;
-  wsUrl: string;
+  peers: LightpushBootstrapPeer[];
   connectTimeoutMs?: number;
   rpcFallback?: (params: PublishParams) => Promise<unknown>;
+  contextFactory?: (peer: LightpushBootstrapPeer) => Promise<LightpushContext>;
 }) {
-  type LightpushContext = {
-    node: any;
-    waitForRemotePeer: (node: unknown, protocols: unknown[], timeoutMs?: number) => Promise<unknown>;
-    protocols: { LightPush: unknown };
-    connectedPubsubTopics: Set<string>;
-  };
-  let contextPromise: Promise<LightpushContext> | undefined;
   const connectTimeoutMs = options.connectTimeoutMs ?? 15_000;
+  const contextPromises = new Map<string, Promise<LightpushContext>>();
+  const resolvedContexts = new Map<string, LightpushContext>();
+  let preferredPeerIndex = 0;
+  const contextFactory = options.contextFactory ?? createLightpushContext;
 
-  const getContext = () => {
-    if (!contextPromise) {
-      contextPromise = createLightpushContext(options);
+  const getContext = (peer: LightpushBootstrapPeer) => {
+    const existingResolved = resolvedContexts.get(peer.multiaddr);
+    if (existingResolved) {
+      return Promise.resolve(existingResolved);
     }
-    return contextPromise;
+    const existingPromise = contextPromises.get(peer.multiaddr);
+    if (existingPromise) {
+      return existingPromise;
+    }
+    const promise = contextFactory(peer)
+      .then((context) => {
+        resolvedContexts.set(peer.multiaddr, context);
+        contextPromises.delete(peer.multiaddr);
+        return context;
+      })
+      .catch((error) => {
+        contextPromises.delete(peer.multiaddr);
+        throw error;
+      });
+    contextPromises.set(peer.multiaddr, promise);
+    return promise;
+  };
+
+  const invalidateContext = async (peer: LightpushBootstrapPeer) => {
+    const context = resolvedContexts.get(peer.multiaddr);
+    resolvedContexts.delete(peer.multiaddr);
+    contextPromises.delete(peer.multiaddr);
+    if (context?.node && typeof context.node.stop === 'function') {
+      try {
+        await context.node.stop();
+      } catch {
+        // Ignore stop errors on failover.
+      }
+    }
+  };
+
+  const attemptIndices = () => {
+    const indices = [];
+    for (let offset = 0; offset < options.peers.length; offset += 1) {
+      indices.push((preferredPeerIndex + offset) % options.peers.length);
+    }
+    return indices;
   };
 
   return async (params: PublishParams) => {
-    try {
-      const context = await getContext();
-      if (!context.connectedPubsubTopics.has(params.pubsubTopic)) {
-        await context.waitForRemotePeer(context.node, [context.protocols.LightPush], connectTimeoutMs);
-        context.connectedPubsubTopics.add(params.pubsubTopic);
-      }
-      const shard = parseShardFromPubsubTopic(params.pubsubTopic);
-      const encoder = context.node.createEncoder({ contentTopic: params.contentTopic, shardId: shard });
-      const payloadBytes = new Uint8Array(Buffer.from(params.payloadBase64, 'base64'));
-      const pushResult = await context.node.lightPush.send(encoder, { payload: payloadBytes, timestamp: new Date() });
-      if (!pushResult?.successes?.length) {
-        const failure = (pushResult?.failures || [])[0];
-        const failureReason = failure?.error || 'unknown_error';
-        throw new Error(`LightPush failed: ${failureReason}`);
-      }
-      return { transport: 'lightpush', successCount: pushResult.successes.length };
-    } catch (error) {
-      const lightpushError = error instanceof Error ? error.message : String(error);
-      if (!options.rpcFallback) {
-        throw error;
-      }
-      console.warn(`[gateway] LightPush publish failed, falling back to RPC: ${lightpushError}`);
+    const failures: string[] = [];
+    for (const index of attemptIndices()) {
+      const peer = options.peers[index];
       try {
-        const fallbackResult = await options.rpcFallback(params);
-        return { transport: 'rpc-fallback', lightpushError, relay: fallbackResult };
-      } catch (rpcError) {
-        const rpcErrorMessage = rpcError instanceof Error ? rpcError.message : String(rpcError);
-        throw new Error(`LightPush failed: ${lightpushError}; RPC fallback failed: ${rpcErrorMessage}`);
+        const context = await getContext(peer);
+        if (!context.connectedPubsubTopics.has(params.pubsubTopic)) {
+          await context.waitForRemotePeer(context.node, [context.protocols.LightPush], connectTimeoutMs);
+          context.connectedPubsubTopics.add(params.pubsubTopic);
+        }
+        const shard = parseShardFromPubsubTopic(params.pubsubTopic);
+        const encoder = context.node.createEncoder({ contentTopic: params.contentTopic, shardId: shard });
+        const payloadBytes = new Uint8Array(Buffer.from(params.payloadBase64, 'base64'));
+        const pushResult = await context.node.lightPush.send(encoder, { payload: payloadBytes, timestamp: new Date() });
+        if (!pushResult?.successes?.length) {
+          const failure = (pushResult?.failures || [])[0];
+          const failureReason = failure?.error || 'unknown_error';
+          throw new Error(`LightPush failed: ${failureReason}`);
+        }
+        preferredPeerIndex = index;
+        return { transport: 'lightpush', successCount: pushResult.successes.length, peer: peer.multiaddr };
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        failures.push(`${peer.multiaddr} (${reason})`);
+        await invalidateContext(peer);
+        console.warn(`[gateway] LightPush bootstrap peer failed: ${peer.multiaddr} (${reason})`);
       }
+    }
+
+    const lightpushError = `all LightPush bootstrap peers failed: ${failures.join('; ')}`;
+    if (!options.rpcFallback) {
+      throw new Error(lightpushError);
+    }
+    console.warn(`[gateway] LightPush publish failed, falling back to RPC: ${lightpushError}`);
+    try {
+      const fallbackResult = await options.rpcFallback(params);
+      return { transport: 'rpc-fallback', lightpushError, relay: fallbackResult };
+    } catch (rpcError) {
+      const rpcErrorMessage = rpcError instanceof Error ? rpcError.message : String(rpcError);
+      throw new Error(`LightPush failed: ${lightpushError}; RPC fallback failed: ${rpcErrorMessage}`);
     }
   };
 }
 
-async function createLightpushContext(options: { peerId: string; wsUrl: string }) {
+async function createLightpushContext(peer: LightpushBootstrapPeer) {
   await ensureJsWakuRuntime();
   const wakuModule = await import('../../../lib/js-waku.min.js');
   const createLightNode = wakuModule.createLightNode as (options: unknown) => Promise<any>;
@@ -901,16 +1002,17 @@ async function createLightpushContext(options: { peerId: string; wsUrl: string }
     throw new Error('Unable to load js-waku lightpush module');
   }
 
-  const remoteMa = buildRemoteMultiaddr({ wsUrl: options.wsUrl, peerId: options.peerId });
   const defaultPubsub = '/waku/2/rs/999/0';
   const node = await createLightNode({
     defaultBootstrap: false,
-    bootstrapPeers: [remoteMa],
+    bootstrapPeers: [peer.multiaddr],
     pubsubTopics: [defaultPubsub],
     shardInfo: { clusterId: 999, shards: [0] },
     networkConfig: { clusterId: 999 },
-    libp2p: { filterMultiaddrs: false, hideWebSocketInfo: true },
-    lightPush: { peers: [remoteMa] },
+    libp2p: peer.isLocalHost
+      ? { filterMultiaddrs: false, hideWebSocketInfo: true }
+      : { hideWebSocketInfo: true },
+    lightPush: { peers: [peer.multiaddr] },
   });
   await node.start();
   await waitForRemotePeer(node, [Protocols.LightPush], 15_000);
@@ -965,17 +1067,10 @@ async function ensureJsWakuRuntime() {
 }
 
 export const __gatewayTestUtils = {
+  createLightpushPublisher,
+  resolveGatewayLightpushBootstrapPeers,
   ensureJsWakuRuntime,
 };
-
-function buildRemoteMultiaddr(params: { wsUrl: string; peerId: string }) {
-  const parsed = new URL(params.wsUrl);
-  const port = Number(parsed.port || (parsed.protocol === 'wss:' ? 443 : 80));
-  const transport = parsed.protocol === 'wss:' ? 'wss' : 'ws';
-  const isIpv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(parsed.hostname);
-  const hostSegment = isIpv4 ? `/ip4/${parsed.hostname}` : `/dns4/${parsed.hostname}`;
-  return `${hostSegment}/tcp/${port}/${transport}/p2p/${params.peerId}`;
-}
 
 function parseShardFromPubsubTopic(pubsubTopic: string) {
   const match = pubsubTopic.match(/^\/waku\/2\/rs\/\d+\/(\d+)$/);

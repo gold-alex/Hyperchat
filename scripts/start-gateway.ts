@@ -58,6 +58,7 @@ const allowedTopics = parseList(process.env.LP_ALLOWED_TOPICS);
 const allowedPubsubTopics = parseList(process.env.LP_ALLOWED_PUBSUB_TOPICS ?? process.env.LP_ALLOWED_PUBSUB);
 const allowlist = parseList(process.env.LP_ALLOWLIST);
 const denylist = parseList(process.env.LP_DENYLIST);
+const lightpushBootstrapPeers = process.env.LP_WAKU_BOOTSTRAP_PEERS;
 
 const maxClockSkewMs = parseNumber(process.env.LP_MAX_CLOCK_SKEW_MS ?? process.env.LP_TIME_SKEW_MS);
 const maxSiweClockSkewMs = parseNumber(process.env.LP_MAX_SIWE_SKEW_MS ?? process.env.LP_TIME_SKEW_MS);
@@ -103,6 +104,7 @@ const config = {
   rpcUrl,
   balanceRpcUrl: process.env.LP_BALANCE_RPC_URL,
   publishTransport: parseTransport(process.env.LP_PUBLISH_TRANSPORT),
+  lightpushBootstrapPeers,
   lightpushPeerId: process.env.LP_WAKU_PEER_ID ?? process.env.PRIMARY_WAKU_PEER_ID,
   lightpushWsUrl: process.env.LP_WAKU_WS_URL,
   lightpushConnectTimeoutMs: parseNumber(process.env.LP_WAKU_CONNECT_TIMEOUT_MS),
@@ -144,6 +146,9 @@ app.listen(port, () => {
   if (config.allowInsecureSiweEnv) console.log('  allowInsecureSiweEnv: true');
   console.log(`  deploymentContext: ${policy.context} (${policy.contextSource})`);
   if (config.publishTransport) console.log(`  publishTransport: ${config.publishTransport}`);
+  if (typeof config.lightpushBootstrapPeers === 'string' && config.lightpushBootstrapPeers.trim().length > 0) {
+    console.log(`  lightpushBootstrapPeers: ${config.lightpushBootstrapPeers}`);
+  }
   if (config.lightpushWsUrl) console.log(`  lightpushWsUrl: ${config.lightpushWsUrl}`);
   if (config.lightpushPeerId) console.log(`  lightpushPeerId: ${config.lightpushPeerId}`);
   if (allowedTopics) console.log(`  allowedTopics: ${allowedTopics.join(', ')}`);

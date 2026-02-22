@@ -7,14 +7,17 @@
 
  Usage:
    node scripts/nwaku-diagnose.js [--uri localhost] [--port 8645] \
-     [--topic /hl-chat/1/BTC-USD_Perps/proto] [--pubsub /waku/2/rs/999/0]
+     [--topic /hl-chat/1/BTC-USD_Perps/proto] [--pubsub /waku/2/rs/999/0] \
+     [--bootstrap-peers '<multiaddr>,<multiaddr>']
 
- Reads defaults from .env: VITE_WAKU_NODE_URI, VITE_WAKU_NODE_PORT, VITE_WAKU_NODE_PEER_ID
+ Reads defaults from .env:
+   VITE_WAKU_BOOTSTRAP_PEERS, VITE_WAKU_NODE_URI, VITE_WAKU_NODE_PORT, VITE_WAKU_NODE_PEER_ID
 */
 
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const { pathToFileURL } = require('node:url');
 require('dotenv').config();
 
 function parseArgs() {
@@ -29,6 +32,7 @@ function parseArgs() {
     else if (a === '--ws-port') out.wsPort = Number(n), i++;
     else if (a === '--topic') out.topic = n, i++;
     else if (a === '--pubsub') out.pubsub = n, i++;
+    else if (a === '--bootstrap-peers') out.bootstrapPeers = n, i++;
     else if (a === '--help' || a === '-h') out.help = true;
   }
   return out;
@@ -75,7 +79,7 @@ function prettyPrint(title, obj) {
 (async () => {
   const args = parseArgs();
   if (args.help) {
-    console.log(`Usage: node scripts/nwaku-diagnose.js [--uri localhost] [--port 8645] [--topic /hl-chat/1/BTC-USD_Perps/proto] [--pubsub /waku/2/rs/999/0]`);
+    console.log(`Usage: node scripts/nwaku-diagnose.js [--uri localhost] [--port 8645] [--topic /hl-chat/1/BTC-USD_Perps/proto] [--pubsub /waku/2/rs/999/0] [--bootstrap-peers '<multiaddr>,<multiaddr>']`);
     process.exit(0);
   }
 
@@ -83,8 +87,31 @@ function prettyPrint(title, obj) {
   const restPort = args.restPort || Number(process.env.WAKU_REST_PORT || 8645);
   const wsPort = args.wsPort || Number(process.env.VITE_WAKU_NODE_PORT || 8000);
   const peerId = process.env.VITE_WAKU_NODE_PEER_ID || '';
+  const bootstrapPeersRaw = args.bootstrapPeers ?? process.env.VITE_WAKU_BOOTSTRAP_PEERS ?? '';
   const topic = args.topic || '/hl-chat/1/TEST-INTEGRATION_Perps/proto';
   const pubsub = args.pubsub || '/waku/2/rs/999/0';
+
+  const bootstrapConfigPath = pathToFileURL(path.join(__dirname, '..', 'lib', 'bootstrap-peer-config.js')).href;
+  const {
+    buildLegacyBootstrapPeerFromHost,
+    parseBootstrapPeerList,
+  } = await import(bootstrapConfigPath);
+
+  let effectiveBootstrapPeers = [];
+  let bootstrapSource = 'legacy';
+  if (String(bootstrapPeersRaw).trim()) {
+    effectiveBootstrapPeers = parseBootstrapPeerList(bootstrapPeersRaw, {
+      contextLabel: 'nwaku-debug bootstrap peers',
+    });
+    bootstrapSource = 'list';
+  } else if (peerId) {
+    effectiveBootstrapPeers = [buildLegacyBootstrapPeerFromHost({
+      contextLabel: 'nwaku-debug legacy bootstrap peer',
+      host: uri,
+      port: wsPort,
+      peerId,
+    })];
+  }
 
   console.log('Nwaku Diagnose');
   console.log(`- REST base:   http://${uri}:${restPort}`);
@@ -92,6 +119,10 @@ function prettyPrint(title, obj) {
   console.log(`- Topic:       ${topic}`);
   console.log(`- PubSub:      ${pubsub}`);
   console.log(`- WS addr:     ws://${uri}:${wsPort}`);
+  console.log(`- Bootstrap:   ${bootstrapSource} (${effectiveBootstrapPeers.length} peer${effectiveBootstrapPeers.length === 1 ? '' : 's'})`);
+  for (const [index, peer] of effectiveBootstrapPeers.entries()) {
+    console.log(`  [${index + 1}] ${peer.multiaddr}`);
+  }
 
   // 1) Node info
   try {
@@ -113,6 +144,17 @@ function prettyPrint(title, obj) {
     const withStore = peers.filter(p => (p.protocols || []).some(x => x.startsWith('/vac/waku/store'))).length;
     const withLightPush = peers.filter(p => (p.protocols || []).some(x => x.startsWith('/vac/waku/lightpush'))).length;
     prettyPrint('Peers Summary', { total, withFilter, withStore, withLightPush });
+
+    if (effectiveBootstrapPeers.length > 0) {
+      const connectedIds = new Set(peers.map((peer) => String(peer.id || '').trim()).filter(Boolean));
+      const selectionOutcomes = effectiveBootstrapPeers.map((peer, index) => ({
+        order: index + 1,
+        peerId: peer.peerId,
+        multiaddr: peer.multiaddr,
+        status: connectedIds.has(peer.peerId) ? 'connected' : 'not_connected',
+      }));
+      prettyPrint('Bootstrap Selection Outcomes', selectionOutcomes);
+    }
 
     // Show first few peers and their protocols
     const sample = peers.slice(0, 8).map(p => ({ id: p.id, protocols: p.protocols, addrs: (p.addresses || []).map(a => a.multiaddr) }));

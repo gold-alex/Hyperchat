@@ -5,11 +5,12 @@
  Usage:
    node scripts/waku-seed.js \
      --peer-id <peerId> [--uri localhost] [--ws-port 8000] \
+     [--bootstrap-peers '<multiaddr>,<multiaddr>'] \
      [--topic /hl-chat/1/TEST-INTEGRATION_Perps/proto] [--cluster 999] [--shard 0] \
      [--num-shards 1024]
 
- Reads defaults from .env:
-   VITE_WAKU_NODE_URI, VITE_WAKU_NODE_PORT, VITE_WAKU_NODE_PEER_ID
+Reads defaults from .env:
+   VITE_WAKU_BOOTSTRAP_PEERS, VITE_WAKU_NODE_URI, VITE_WAKU_NODE_PORT, VITE_WAKU_NODE_PEER_ID
 */
 
 const path = require('node:path');
@@ -60,8 +61,14 @@ function parseArgs() {
     else if (a === '--cluster') out.cluster = Number(n), i++;
     else if (a === '--shard') out.shard = Number(n), i++;
     else if (a === '--num-shards') out.numShards = Number(n), i++;
+    else if (a === '--bootstrap-peers') out.bootstrapPeers = n, i++;
   }
   return out;
+}
+
+function formatAttemptFailures(attemptFailures) {
+  if (!attemptFailures.length) return '(none)';
+  return attemptFailures.map((item) => `${item.peer} (${item.reason})`).join('; ');
 }
 
 (async () => {
@@ -74,54 +81,102 @@ function parseArgs() {
   const envNumShards = process.env.WAKU_NUM_SHARDS || process.env.VITE_WAKU_NUM_SHARDS;
   const numShards = args.numShards ?? (envNumShards ? Number(envNumShards) : undefined);
   const topic = args.topic || '/hl-chat/1/TEST-INTEGRATION_Perps/proto';
+  const bootstrapPeersRaw = args.bootstrapPeers ?? process.env.VITE_WAKU_BOOTSTRAP_PEERS ?? '';
 
-  if (!peerId) {
-    console.error('Missing peer id. Pass --peer-id or set VITE_WAKU_NODE_PEER_ID.');
-    process.exit(2);
+  const bootstrapConfigPath = pathToFileURL(path.join(__dirname, '..', 'lib', 'bootstrap-peer-config.js')).href;
+  const {
+    buildLegacyBootstrapPeerFromHost,
+    parseBootstrapPeerList,
+  } = await import(bootstrapConfigPath);
+
+  let bootstrapPeers = [];
+  if (String(bootstrapPeersRaw).trim()) {
+    bootstrapPeers = parseBootstrapPeerList(bootstrapPeersRaw, {
+      contextLabel: 'nwaku-seed bootstrap peers',
+    });
+  } else {
+    if (!peerId) {
+      console.error('Missing peer id. Pass --peer-id or set VITE_WAKU_NODE_PEER_ID.');
+      process.exit(2);
+    }
+    bootstrapPeers = [buildLegacyBootstrapPeerFromHost({
+      contextLabel: 'nwaku-seed legacy bootstrap peer',
+      host: uri,
+      port,
+      peerId,
+    })];
   }
-
-  const wsProto = ['localhost', '127.0.0.1'].includes(String(uri).toLowerCase()) ? 'ws' : 'wss';
-  const remoteMaStr = `/dns4/${uri}/tcp/${port}/${wsProto}/p2p/${peerId}`;
   const pubsub = `/waku/2/rs/${cluster}/${shard}`;
 
   const wakuPath = pathToFileURL(path.join(__dirname, '..', 'lib', 'js-waku.min.js')).href;
   const { createLightNode, waitForRemotePeer, Protocols } = await import(wakuPath);
 
-  console.log('Connecting to nwaku via:', remoteMaStr);
+  console.log('Configured bootstrap peers:');
+  bootstrapPeers.forEach((peer, index) => {
+    console.log(`  [${index + 1}] ${peer.multiaddr}`);
+  });
+
   const networkConfig = typeof numShards === 'number'
     ? { clusterId: cluster, numShardsInCluster: numShards }
     : { clusterId: cluster };
+  const attemptFailures = [];
 
-  const node = await createLightNode({
-    defaultBootstrap: false,
-    bootstrapPeers: [remoteMaStr],
-    pubsubTopics: [pubsub],
-    shardInfo: { clusterId: cluster, shards: [shard] },
-    networkConfig,
-    libp2p: { filterMultiaddrs: false, hideWebSocketInfo: true },
-    // Explicitly configure service peers to avoid discovery delays in isolated clusters
-    store: { peers: [remoteMaStr] },
-    filter: { peers: [remoteMaStr] },
-    lightPush: { peers: [remoteMaStr] },
-  });
+  for (let index = 0; index < bootstrapPeers.length; index += 1) {
+    const peer = bootstrapPeers[index];
+    console.log(`Attempt ${index + 1}/${bootstrapPeers.length}: ${peer.multiaddr}`);
+    let node;
+    try {
+      node = await createLightNode({
+        defaultBootstrap: false,
+        bootstrapPeers: [peer.multiaddr],
+        pubsubTopics: [pubsub],
+        shardInfo: { clusterId: cluster, shards: [shard] },
+        networkConfig,
+        libp2p: peer.isLocalHost
+          ? { filterMultiaddrs: false, hideWebSocketInfo: true }
+          : { hideWebSocketInfo: true },
+        // Explicitly configure service peers to avoid discovery delays in isolated clusters.
+        store: { peers: [peer.multiaddr] },
+        filter: { peers: [peer.multiaddr] },
+        lightPush: { peers: [peer.multiaddr] },
+      });
 
-  await node.start();
-  console.log('Waiting for LightPush peer...');
-  await waitForRemotePeer(node, [Protocols.LightPush], 45000);
+      await node.start();
+      console.log('Waiting for LightPush peer...');
+      await waitForRemotePeer(node, [Protocols.LightPush], 45000);
 
-  const encoder = node.createEncoder({ contentTopic: topic, shardId: shard });
-  const payload = new TextEncoder().encode(JSON.stringify({ kind: 'seed', ts: Date.now() }));
-  const pushResult = await node.lightPush.send(encoder, { payload, timestamp: new Date() });
-  if (!pushResult?.successes?.length) {
-    const failure = (pushResult?.failures || [])[0];
-    const reason = failure?.error || 'unknown_error';
-    const peer = failure?.peerId ? ` (peer ${failure.peerId.toString()})` : '';
-    throw new Error(`LightPush failed: ${reason}${peer}. Check nwaku logs for detail.`);
+      const encoder = node.createEncoder({ contentTopic: topic, shardId: shard });
+      const payload = new TextEncoder().encode(JSON.stringify({ kind: 'seed', ts: Date.now() }));
+      const pushResult = await node.lightPush.send(encoder, { payload, timestamp: new Date() });
+      if (!pushResult?.successes?.length) {
+        const failure = (pushResult?.failures || [])[0];
+        const reason = failure?.error || 'unknown_error';
+        const failedPeer = failure?.peerId ? ` (peer ${failure.peerId.toString()})` : '';
+        throw new Error(`LightPush failed: ${reason}${failedPeer}. Check nwaku logs for detail.`);
+      }
+
+      console.log(`Selected bootstrap peer: ${peer.multiaddr}`);
+      if (attemptFailures.length > 0) {
+        console.log(`Previous failed peers: ${formatAttemptFailures(attemptFailures)}`);
+      }
+      console.log('Seed message pushed to Waku');
+      await node.stop();
+      process.exit(0);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      attemptFailures.push({ peer: peer.multiaddr, reason });
+      console.warn(`Bootstrap attempt failed for ${peer.multiaddr}: ${reason}`);
+      if (node) {
+        try {
+          await node.stop();
+        } catch {
+          // ignore teardown errors when trying next peer
+        }
+      }
+    }
   }
-  console.log('Seed message pushed to Waku');
 
-  await node.stop();
-  process.exit(0);
+  throw new Error(`No bootstrap peers succeeded. Failures: ${formatAttemptFailures(attemptFailures)}`);
 })().catch((e) => {
   console.error('Seed failed:', e);
   process.exit(1);
