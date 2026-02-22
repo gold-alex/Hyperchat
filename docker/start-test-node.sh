@@ -1,8 +1,34 @@
 #!/bin/bash
-# Start nwaku node in test mode
-# Usage: ./docker/start-test-node.sh
+# Start nwaku node(s) in test mode
+# Usage: ./docker/start-test-node.sh [--with-gateway]
 
 set -e
+
+WITH_GATEWAY=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --with-gateway)
+            WITH_GATEWAY=true
+            shift
+            ;;
+        -h|--help)
+            cat <<'EOF'
+Usage: ./docker/start-test-node.sh [--with-gateway]
+
+Options:
+  --with-gateway   Also start/restart the lightpush-gateway service.
+  -h, --help       Show this help message.
+EOF
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Run ./docker/start-test-node.sh --help"
+            exit 1
+            ;;
+    esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -27,6 +53,7 @@ echo ""
 
 PRIMARY_RUNNING=false
 RELAY_RUNNING=false
+GATEWAY_RUNNING=false
 
 if docker ps --format '{{.Names}}' | grep -q "^nwaku-node$"; then
     PRIMARY_RUNNING=true
@@ -34,16 +61,24 @@ fi
 if docker ps --format '{{.Names}}' | grep -q "^nwaku-relay$"; then
     RELAY_RUNNING=true
 fi
+if $WITH_GATEWAY && docker ps --format '{{.Names}}' | grep -q "^lightpush-gateway$"; then
+    GATEWAY_RUNNING=true
+fi
 
-if $PRIMARY_RUNNING || $RELAY_RUNNING; then
+if $PRIMARY_RUNNING || $RELAY_RUNNING || $GATEWAY_RUNNING; then
     echo "! Existing containers detected:"
     $PRIMARY_RUNNING && echo "   - nwaku-node"
     $RELAY_RUNNING && echo "   - nwaku-relay"
-    read -p "   Restart both? (y/n) " -n 1 -r
+    $GATEWAY_RUNNING && echo "   - lightpush-gateway"
+    read -p "   Restart detected services? (y/n) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        "${COMPOSE[@]}" stop nwaku-relay nwaku || true
-        "${COMPOSE[@]}" rm -f nwaku-relay nwaku || true
+        STOP_SERVICES=(nwaku-relay nwaku)
+        if $WITH_GATEWAY; then
+            STOP_SERVICES+=(lightpush-gateway)
+        fi
+        "${COMPOSE[@]}" stop "${STOP_SERVICES[@]}" || true
+        "${COMPOSE[@]}" rm -f "${STOP_SERVICES[@]}" || true
     else
         echo "! Leaving containers untouched."
         exit 0
@@ -124,6 +159,13 @@ fi
 if [ -n "$PEER_ID" ]; then
     echo "   Peer ID:    ${PEER_ID}"
     echo ""
+    if $WITH_GATEWAY; then
+        echo "Starting gateway service (lightpush-gateway)..."
+        "${COMPOSE[@]}" up -d --build lightpush-gateway
+        echo "   Gateway URL: http://localhost:${LP_GATEWAY_PORT:-8787}"
+        echo ""
+    fi
+
     echo "Dual-node Waku stack is running!"
     echo ""
     echo "Add these values to ${PROJECT_ROOT}/.env:"
@@ -139,10 +181,16 @@ if [ -n "$PEER_ID" ]; then
     echo "Useful commands:"
     echo "   View primary logs:  docker logs -f nwaku-node"
     echo "   View relay logs:    docker logs -f nwaku-relay"
+    if $WITH_GATEWAY; then
+        echo "   View gateway logs:  docker logs -f lightpush-gateway"
+    fi
     echo "   Stop stack:         ${COMPOSE[*]} stop"
     echo "   Remove stack:       ${COMPOSE[*]} down"
     echo "   Restart primary:    ${COMPOSE[*]} restart nwaku"
     echo "   Restart relay:      ${COMPOSE[*]} restart nwaku-relay"
+    if $WITH_GATEWAY; then
+        echo "   Restart gateway:    ${COMPOSE[*]} restart lightpush-gateway"
+    fi
     echo "   Check DB (sqlite sidecar):"
     echo "                  ${COMPOSE[*]} run --rm sqlite /db/waku_messages.db 'SELECT COUNT(*) FROM messages;'"
     echo "   Alt: host sqlite3:"
