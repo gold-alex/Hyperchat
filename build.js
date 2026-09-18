@@ -27,11 +27,11 @@ const COPY_FILES = [
   'content.css',
   'wallet-bridge.js',
   'links-config-global.js',
-  'icon-16.png',
-  'icon-32.png',
-  'icon-48.png',
-  'icon-128.png',
 ]
+
+// The extension icons, copied into dist/icons/ so the manifest paths resolve.
+// Regenerate them from the source art with: python3 icons/make-icons.py
+const ICON_SIZES = [16, 32, 48, 128]
 
 const relays = (process.env.HYPERCHAT_RELAYS || '').trim()
 // api.hlnames.xyz answers 401 without a key, so without a default the .hl name
@@ -62,10 +62,20 @@ const buildOptions = {
 function copyStaticFiles() {
   for (const file of COPY_FILES) {
     if (!fs.existsSync(file)) {
-      if (!file.startsWith('icon-')) console.warn(`  ! ${file} not found, skipping`)
+      console.warn(`  ! ${file} not found, skipping`)
       continue
     }
     fs.copyFileSync(file, path.join('dist', file))
+  }
+
+  fs.mkdirSync(path.join('dist', 'icons'), { recursive: true })
+  for (const size of ICON_SIZES) {
+    const icon = path.join('icons', `icon-${size}.png`)
+    if (!fs.existsSync(icon)) {
+      console.warn(`  ! ${icon} not found - Chrome will fall back to a letter tile`)
+      continue
+    }
+    fs.copyFileSync(icon, path.join('dist', icon))
   }
 }
 

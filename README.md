@@ -141,6 +141,7 @@ lib/nostr/
   client.js           ties it together, including the repair pass
   names.js            .hl name lookup and verification
 relay/                optional anchor relay
+icons/                extension icons, plus make-icons.py to rebuild them
 ```
 
 Sockets live in the side panel, not the service worker: MV3 workers idle out and
