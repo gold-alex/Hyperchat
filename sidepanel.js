@@ -40,6 +40,10 @@ const state = {
 const client = new HyperchatClient()
 const pnlService = new PnLService()
 const pnlCache = new Map()
+// Addresses with a lookup already in flight. A chatty trader has many messages in
+// the room, and without this every one of them fires its own API call before the
+// first result lands.
+const pnlInFlight = new Set()
 let pnlPollTimer = null
 
 // --- content script bridge ------------------------------------------------
@@ -97,6 +101,7 @@ async function enterRoom() {
 
   if (changingRoom) {
     pnlCache.clear()
+    pnlInFlight.clear()
     pnlService.clearCache()
     stopPnLPolling()
   }
@@ -357,6 +362,16 @@ function updateChatHeader() {
   if (relayElement) relayElement.textContent = relayLabel()
 }
 
+// Several PnL lookups land in quick succession; collapse their repaints into one.
+let renderTimer = null
+function scheduleRender() {
+  if (renderTimer) return
+  renderTimer = setTimeout(() => {
+    renderTimer = null
+    renderMessages()
+  }, 50)
+}
+
 function scrollToBottom() {
   if (!state.autoScroll) return
   const container = document.getElementById('chatMessages')
@@ -431,7 +446,8 @@ async function sendMessage() {
 // --- P&L ------------------------------------------------------------------
 
 async function loadPnLForAddress(address) {
-  if (!address) return
+  if (!address || pnlInFlight.has(address)) return
+  pnlInFlight.add(address)
 
   try {
     const previous = pnlCache.get(address)
@@ -441,7 +457,14 @@ async function loadPnLForAddress(address) {
     pnlCache.set(address, display)
 
     const badge = document.querySelector(`.hl-pnl-badge[data-address="${address}"]`)
-    if (!badge) return
+
+    // No badge in the DOM yet: the row was drawn before this lookup finished, and
+    // renderMessages only emits a badge for an address already in the cache.
+    // Without this repaint the two halves wait on each other and PnL never shows.
+    if (!badge) {
+      scheduleRender()
+      return
+    }
 
     if (previous && previous.raw !== display.raw) {
       badge.classList.remove('pnl-updating', 'pnl-increase', 'pnl-decrease')
@@ -460,6 +483,8 @@ async function loadPnLForAddress(address) {
     }
   } catch (error) {
     console.error(`Failed to load P&L for ${address}:`, error)
+  } finally {
+    pnlInFlight.delete(address)
   }
 }
 
