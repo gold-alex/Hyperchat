@@ -83,6 +83,22 @@ async function signTypedData(typedData) {
 
 // --- market detection -----------------------------------------------------
 
+// Hyperliquid renders the leverage badge, and on first load a welcome banner,
+// inside the same subtree as the pair name. Taking textContent wholesale yields
+// things like "HYPE-USDC10x", which is a DIFFERENT room from "HYPE-USDC" - so the
+// layout changing silently moved traders into an empty room.
+//
+// Pull the pair out by shape instead of trusting the node to contain only it.
+// Lowercase is allowed because of the k-prefixed markets (kPEPE-USD); roomTag
+// upper-cases for the tag, so casing never splits a room.
+const PAIR_PATTERN = /([A-Za-z0-9]{1,15}[-/]USD[C]?)/
+
+function normalizePair(text) {
+  if (!text) return null
+  const match = String(text).match(PAIR_PATTERN)
+  return match ? match[1] : null
+}
+
 function detectMarketInfo() {
   // Standalone chat window: the market came in on the URL.
   if (window.CHAT_PAIR_OVERRIDE) {
@@ -107,13 +123,15 @@ function detectMarketInfo() {
     if (coinIcon) {
       const container = coinIcon.closest('div[style*="display"]')
       if (container && container.parentElement) {
+        // Prefer the most specific match. The outermost container also contains
+        // the pair, but wrapped in everything else on the page.
+        let best = null
         for (const element of container.parentElement.querySelectorAll('div')) {
-          const text = element.textContent.trim()
-          if (text && !text.includes('Welcome') && (text.includes('-USD') || text.match(/^[A-Z]+-USD[C]?$/))) {
-            pairElement = element
-            break
-          }
+          if (!normalizePair(element.textContent)) continue
+          const length = element.textContent.trim().length
+          if (!best || length < best.length) best = { element, length }
         }
+        if (best) pairElement = best.element
       }
     }
   }
@@ -126,14 +144,7 @@ function detectMarketInfo() {
   }
 
   if (pairElement) {
-    let newPair = pairElement.textContent.trim()
-
-    // The landing banner sometimes bleeds into this node.
-    if (newPair.includes('Welcome')) {
-      const match = newPair.match(/([A-Z]+[-]USD[C]?)/)
-      if (match) newPair = match[1]
-    }
-
+    const newPair = normalizePair(pairElement.textContent)
     if (newPair && newPair !== HYPERCHAT_STATE.currentPair) {
       HYPERCHAT_STATE.currentPair = newPair
     }
@@ -284,4 +295,4 @@ if (document.readyState === 'loading') {
   init()
 }
 
-export { detectMarketInfo, scrollToElement, findByContains, HYPERCHAT_STATE }
+export { detectMarketInfo, normalizePair, scrollToElement, findByContains, HYPERCHAT_STATE }

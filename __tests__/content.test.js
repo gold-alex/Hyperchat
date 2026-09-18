@@ -32,7 +32,7 @@ function coinInfoDom(pairText) {
   `
 }
 
-const { detectMarketInfo, findByContains, scrollToElement, HYPERCHAT_STATE } = require('../content.js')
+const { detectMarketInfo, normalizePair, findByContains, scrollToElement, HYPERCHAT_STATE } = require('../content.js')
 
 beforeEach(() => {
   document.body.innerHTML = ''
@@ -90,6 +90,35 @@ describe('market detection', () => {
     expect(HYPERCHAT_STATE.currentMarket).toBe('Spot')
   })
 
+  it('does not let the leverage badge become part of the room', () => {
+    // Hyperliquid's mobile layout puts the pair and the "10x" badge in one
+    // subtree. Reading textContent wholesale produced "HYPE-USDC10x", a room
+    // nobody else was in, so widening the side panel emptied the chat.
+    document.body.innerHTML = coinInfoDom('HYPE-USDC10x')
+
+    detectMarketInfo()
+
+    expect(HYPERCHAT_STATE.currentPair).toBe('HYPE-USDC')
+  })
+
+  it('picks the pair out of a cluttered container', () => {
+    document.body.innerHTML = `
+      <div>
+        <div style="display: flex">
+          <img alt="hype" src="https://app.hyperliquid.xyz/coins/HYPE.svg" />
+        </div>
+        <div>
+          <div>HYPE-USDC<span>10x</span></div>
+          <div>91.769 +8.484 / +10.19%</div>
+        </div>
+      </div>
+    `
+
+    detectMarketInfo()
+
+    expect(HYPERCHAT_STATE.currentPair).toBe('HYPE-USDC')
+  })
+
   it('reports UNKNOWN rather than guessing when the page has nothing', () => {
     document.body.innerHTML = '<div>no market here</div>'
 
@@ -106,6 +135,30 @@ describe('market detection', () => {
 
     expect(HYPERCHAT_STATE.currentPair).toBe('SOL-USD')
     expect(HYPERCHAT_STATE.currentMarket).toBe('Spot')
+  })
+})
+
+describe('pair extraction', () => {
+  it('strips anything bolted onto the pair', () => {
+    expect(normalizePair('HYPE-USDC10x')).toBe('HYPE-USDC')
+    expect(normalizePair('Welcome to Hyperliquid HYPE-USD')).toBe('HYPE-USD')
+    expect(normalizePair('BTC-USD 10x Cross')).toBe('BTC-USD')
+    expect(normalizePair('  ETH-USD\n')).toBe('ETH-USD')
+  })
+
+  it('keeps the k prefix on the k-markets, which are real distinct markets', () => {
+    expect(normalizePair('kPEPE-USD')).toBe('kPEPE-USD')
+    expect(normalizePair('kBONK-USD20x')).toBe('kBONK-USD')
+  })
+
+  it('handles spot pairs written with a slash', () => {
+    expect(normalizePair('PURR/USDC')).toBe('PURR/USDC')
+  })
+
+  it('returns null when there is no pair to find', () => {
+    expect(normalizePair('Welcome to Hyperliquid')).toBeNull()
+    expect(normalizePair('')).toBeNull()
+    expect(normalizePair(null)).toBeNull()
   })
 })
 
