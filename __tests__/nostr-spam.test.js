@@ -16,7 +16,7 @@ const {
   toChatMessage,
 } = require('../lib/nostr/event.js')
 const { applyRateLimit, passesLocalChecks } = require('../lib/nostr/moderation.js')
-const { roomTag, SPAM_POLICY } = require('../lib/nostr/config.js')
+const { baseAsset, roomTag, SPAM_POLICY } = require('../lib/nostr/config.js')
 
 describe('proof of work', () => {
   it('counts leading zero bits the way NIP-13 defines them', () => {
@@ -207,6 +207,26 @@ describe('rate limit', () => {
     const kept = applyRateLimit(messages, 10)
     expect(kept.filter((message) => message.address === '0xaaa')).toHaveLength(10)
     expect(kept.filter((message) => message.address === '0xbbb')).toHaveLength(10)
+  })
+})
+
+describe('market naming', () => {
+  it('drops the quote asset, which nobody says out loud', () => {
+    expect(baseAsset('HYPE-USDC')).toBe('HYPE')
+    expect(baseAsset('BTC-USD')).toBe('BTC')
+    expect(baseAsset('PURR/USDC')).toBe('PURR')
+  })
+
+  it('leaves the k-markets alone', () => {
+    // kPEPE upper-cased reads as KPEPE, which is not what the market is called.
+    expect(baseAsset('kPEPE-USD')).toBe('kPEPE')
+  })
+
+  it('survives a pair with nothing to strip', () => {
+    expect(baseAsset('HYPE')).toBe('HYPE')
+    expect(baseAsset('')).toBe('')
+    expect(baseAsset(null)).toBe('')
+    expect(baseAsset(undefined)).toBe('')
   })
 })
 

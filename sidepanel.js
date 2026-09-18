@@ -8,7 +8,7 @@
 // out and would drop the connections underneath us.
 
 import { HyperchatClient } from './lib/nostr/client.js'
-import { roomTag } from './lib/nostr/config.js'
+import { baseAsset, roomTag } from './lib/nostr/config.js'
 import {
   bindingTypedData,
   buildBindingEvent,
@@ -235,7 +235,7 @@ function renderShell() {
     return
   }
 
-  const roomId = `${state.pair}_${state.market}`
+  const audience = `${baseAsset(state.pair)} ${state.market}`
   const signedIn = !!state.identity
 
   root.innerHTML = `
@@ -258,7 +258,7 @@ function renderShell() {
 
         <div class="hl-chat-content">
           <div class="hl-chat-messages" id="chatMessages">
-            <div class="hl-loading">Loading ${escapeHtml(roomId)} chat...</div>
+            <div class="hl-loading">Loading ${escapeHtml(audience)} chat...</div>
           </div>
 
           ${
@@ -279,7 +279,7 @@ function renderShell() {
           </div>
           <div class="hl-chat-input-container">
             <input type="text" class="hl-chat-input" id="messageInput"
-                   placeholder="Chat with ${escapeHtml(roomId)} traders..." maxlength="500" />
+                   placeholder="Chat with other ${escapeHtml(audience)} Traders" maxlength="500" />
             <button class="hl-send-btn" id="sendMessage">Send</button>
           </div>
           `
@@ -312,8 +312,8 @@ function renderMessages() {
   const messages = client.messages
 
   if (messages.length === 0) {
-    const roomId = `${state.pair}_${state.market}`
-    container.innerHTML = `<div class="hl-loading">No messages yet in ${escapeHtml(roomId)}. Be the first to chat!</div>`
+    const audience = `${baseAsset(state.pair)} ${state.market}`
+    container.innerHTML = `<div class="hl-loading">No messages yet in ${escapeHtml(audience)}. Be the first to chat!</div>`
     return
   }
 
