@@ -46,14 +46,5 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true
   }
   
-  if (request.action === 'syncSidepanel') {
-    // Forward sync message to sidepanel
-    chrome.runtime.sendMessage(request).catch(() => {
-      // Sidepanel might not be open
-    })
-    sendResponse({success:true})
-    return true
-  }
-
 })
 

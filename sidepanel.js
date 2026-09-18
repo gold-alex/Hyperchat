@@ -1,932 +1,565 @@
-// Side panel script for Hyperliquid Chat
-// This runs in the extension context, not the page context
+// Side panel: the whole chat client.
+//
+// It owns the relay connections, the room, the messages and sign-in. The content
+// script only reports which market is on screen and holds the pen for the two
+// wallet signatures, because window.ethereum is reachable only from the page.
+//
+// Sockets live here rather than in the service worker on purpose: MV3 workers idle
+// out and would drop the connections underneath us.
 
-console.log('Sidepanel script loaded');
+import { HyperchatClient } from './lib/nostr/client.js'
+import { roomTag } from './lib/nostr/config.js'
+import {
+  bindingTypedData,
+  buildBindingEvent,
+  clearIdentity,
+  identityFromLoginSignature,
+  loadIdentity,
+  loginTypedData,
+  normalizeAddress,
+  saveIdentity,
+} from './lib/nostr/identity.js'
+import { fetchHlNames, verifyHlName } from './lib/nostr/names.js'
+import PnLService from './pnl-service.js'
+import { ELEMENT_LINK_CONFIG, processElementLinks } from './links-config.js'
 
-// Get URL parameters for current trading pair/market
-const params = new URLSearchParams(location.search);
-const initialPair = params.get('pair') || 'UNKNOWN';
-const initialMarket = params.get('market') || 'Perps';
+const params = new URLSearchParams(location.search)
 
-// State management
-let currentPair = initialPair;
-let currentMarket = initialMarket;
-let walletAddress = '';
-let messages = [];
-let supabase = null;
-let chatInstance = null;
-let availableNames = [];
-let selectedName = '';
-let autoScroll = true;
-let realtimeChannel = null;
-let hasBackendAuth = false;
-let hasLoadedInitialData = false;
-let pnlService = null;
-let userPnLCache = new Map();
-let pnlUpdateInterval = null;
+const state = {
+  pair: params.get('pair') || '',
+  market: params.get('market') || 'Perps',
+  identity: null,
+  availableNames: [],
+  selectedName: '',
+  autoScroll: true,
+  relays: { connected: [], total: 0 },
+  signingIn: false,
+  uiReady: false,
+}
 
-// Initialize Supabase
-async function initializeSupabase() {
-    console.log('Importing Supabase library...');
+const client = new HyperchatClient()
+const pnlService = new PnLService()
+const pnlCache = new Map()
+let pnlPollTimer = null
 
+// --- content script bridge ------------------------------------------------
+
+async function callContentScript(message, { timeoutMs = 125000 } = {}) {
+  const tabs = await chrome.tabs.query({ url: '*://app.hyperliquid.xyz/*' })
+  if (!tabs || tabs.length === 0) {
+    throw new Error('Open app.hyperliquid.xyz/trade first')
+  }
+
+  let lastError = new Error('Hyperliquid tab is not responding')
+
+  for (const tab of tabs) {
     try {
-        // Import PnL service first
-        await import(chrome.runtime.getURL('pnl-service.js'));
-        if (typeof window.PnLService !== 'undefined') {
-            pnlService = new window.PnLService();
-            console.log('✅ P&L service initialized');
-        }
-
-        const supabaseModule = await import(chrome.runtime.getURL('supabase.js'));
-        console.log('✅ Supabase module imported');
-
-        let createClient = null;
-        if (supabaseModule?.supabase?.createClient) {
-            createClient = supabaseModule.supabase.createClient;
-        } else if (supabaseModule?.createClient) {
-            createClient = supabaseModule.createClient;
-        } else if (typeof window !== 'undefined' && window.supabase?.createClient) {
-            createClient = window.supabase.createClient;
-        }
-
-        if (createClient) {
-            const SUPABASE_URL = process.env.SUPABASE_URL;
-            const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
-            supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-            console.log('✅ Supabase client created successfully');
-        } else {
-            console.error('❌ Could not locate createClient after importing Supabase');
-        }
+      const response = await Promise.race([
+        chrome.tabs.sendMessage(tab.id, message),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out')), timeoutMs)),
+      ])
+      if (response?.error) throw new Error(response.error)
+      if (response) return response
     } catch (error) {
-        console.error('❌ Failed to import Supabase library:', error);
+      lastError = error
     }
+  }
 
-    initializeChat();
+  throw lastError
 }
 
-// Check if we're on trade page and navigate if not
-async function checkAndNavigateToTrade() {
-    try {
-        // Get the current active tab
-        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        
-        if (activeTab && (!activeTab.url || !activeTab.url.includes('app.hyperliquid.xyz/trade'))) {
-            console.log('Not on trade page, navigating...');
-            
-            // Navigate to trade page
-            await chrome.tabs.update(activeTab.id, { url: 'https://app.hyperliquid.xyz/trade' });
-            
-            // Wait for the page to load
-            await new Promise((resolve) => {
-                const listener = (tabId, info) => {
-                    if (tabId === activeTab.id && info.status === 'complete') {
-                        chrome.tabs.onUpdated.removeListener(listener);
-                        // Add extra delay for content script to initialize
-                        setTimeout(resolve, 2000);
-                    }
-                };
-                chrome.tabs.onUpdated.addListener(listener);
-                
-                // Timeout after 10 seconds
-                setTimeout(resolve, 10000);
-            });
-            
-            console.log('Navigation complete');
-        } else {
-            console.log('Already on trade page');
-        }
-    } catch (error) {
-        console.error('Error checking/navigating to trade page:', error);
-    }
+async function syncRoomFromPage() {
+  try {
+    const response = await callContentScript({ action: 'getCurrentRoom' }, { timeoutMs: 3000 })
+    if (!response?.pair || response.pair === 'UNKNOWN') return false
+
+    const changed = response.pair !== state.pair || response.market !== state.market
+    state.pair = response.pair
+    state.market = response.market || 'Perps'
+
+    if (changed || !state.uiReady) await enterRoom()
+    return true
+  } catch {
+    return false
+  }
 }
 
-// Restore wallet connection state from Chrome storage
-async function restoreWalletConnection() {
-    try {
-        console.log("Checking for stored wallet connection in side panel...");
+// --- rooms ----------------------------------------------------------------
 
-        const result = await new Promise((resolve) => {
-            chrome.storage.local.get(['walletConnected', 'walletAddress', 'availableNames', 'selectedName', 'hasBackendAuth'], (data) => {
-                resolve(data);
-            });
-        });
+async function enterRoom() {
+  if (!state.pair) return
 
-        if (result.walletConnected && result.walletAddress) {
-            console.log("Restoring wallet connection in side panel:", result.walletAddress);
+  // Only tear down PnL when the room genuinely changes. This used to run
+  // unconditionally and blank the message list, while joinRoom below early
+  // returns for an unchanged room - so nothing ever refilled it and the panel
+  // sat empty until the next inbound event.
+  const changingRoom = client.room?.tag !== roomTag(state.pair, state.market)
 
-            // Restore wallet state
-            walletAddress = result.walletAddress;
-            availableNames = result.availableNames || [];
-            selectedName = result.selectedName || '';
-            hasBackendAuth = result.hasBackendAuth || false;
+  if (changingRoom) {
+    pnlCache.clear()
+    pnlService.clearCache()
+    stopPnLPolling()
+  }
 
-            console.log("Wallet connection restored in side panel successfully");
-        } else {
-            console.log("No stored wallet connection found in side panel");
-        }
-    } catch (error) {
-        console.error("Failed to restore wallet connection in side panel:", error);
-    }
+  if (!state.uiReady) {
+    state.uiReady = true
+    renderShell()
+  } else {
+    updateChatHeader()
+    renderMessages()
+  }
+
+  await client.joinRoom(state.pair, state.market)
+  if (changingRoom) startPnLPolling()
 }
 
-// Initialize chat UI
-async function initializeChat() {
-    console.log('Initializing side panel chat...');
-    
-    // Show initial loading screen
-    const root = document.getElementById('sidepanel-root');
-    if (root) {
-        root.innerHTML = `
-            <div style="padding: 20px; text-align: center;">
-                <h3>Navigating to Hyperliquid...</h3>
-                <p>Please wait while we load the trade page</p>
-            </div>
-        `;
-    }
+// --- sign in --------------------------------------------------------------
+//
+// Two wallet popups, once per device, then never again: the first signature is
+// hashed into the chat key and never leaves the machine, the second is published
+// as proof that the key belongs to this address. After that messages are signed
+// locally, so sending no longer opens the wallet at all.
 
-    // Check if we need to navigate to trade page
-    await checkAndNavigateToTrade();
+async function signIn() {
+  if (state.signingIn) return
+  state.signingIn = true
+  renderShell()
 
-    // Restore wallet connection state if it exists
-    await restoreWalletConnection();
+  try {
+    const { address } = await callContentScript({ action: 'connectWallet' })
+    if (!address) throw new Error('No wallet account available')
 
-    // Keep trying to sync until we get valid data
-    let syncAttempts = 0;
-    const maxAttempts = 20; // Try for up to 10 seconds
-    
-    while (!hasLoadedInitialData && syncAttempts < maxAttempts) {
-        await syncWithContentScript();
-        
-        if (!hasLoadedInitialData) {
-            // Wait 500ms before trying again
-            await new Promise(resolve => setTimeout(resolve, 500));
-            syncAttempts++;
-        }
-    }
-    
-    // If we still don't have data after all attempts, use defaults but don't show UNKNOWN
-    if (!hasLoadedInitialData) {
-        console.log('Could not sync with content script, waiting for data...');
-        // Don't create UI yet - wait for sync from periodic interval
-    }
-
-    // Listen for room changes from content script and mode changes
-    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-        if (request.action === 'roomChange') {
-            currentPair = request.pair;
-            currentMarket = request.market;
-            updateChatHeader();
-            
-            // Clear messages and P&L cache when changing rooms
-            messages = [];
-            userPnLCache.clear();
-            if (pnlService) {
-                pnlService.clearCache(); // Clear all cache
-            }
-            stopPnLPolling();
-            
-            loadChatHistory();
-            if (realtimeChannel) {
-                supabase.removeChannel(realtimeChannel);
-            }
-            subscribeBroadcast();
-        } else if (request.action === 'closeSidePanel') {
-            // Close the side panel when switching to floating mode
-            window.close();
-        } else if (request.action === 'syncSidepanel') {
-            // Receive sync data from content script
-            if (request.pair && request.pair !== 'UNKNOWN') {
-                currentPair = request.pair;
-                currentMarket = request.market || 'Perps';
-                messages = request.messages || [];
-                
-                // If UI hasn't been created yet, create it now
-                if (!hasLoadedInitialData) {
-                    hasLoadedInitialData = true;
-                    createChatUI();
-                    setupEventListeners();
-                    loadChatHistory();
-                    subscribeBroadcast();
-                } else {
-                    updateChatHeader();
-                    updateMessagesUI();
-                    scrollToBottom();
-                    
-                    // Re-subscribe to the new room
-                    if (realtimeChannel) {
-                        supabase.removeChannel(realtimeChannel);
-                    }
-                    subscribeBroadcast();
-                }
-            }
-        }
-    });
-    
-    // Periodically sync with content script to stay up to date
-    setInterval(async () => {
-        await syncWithContentScript();
-        
-        // If we haven't created the UI yet and now have data, create it
-        if (!document.querySelector('.hl-chat-widget') && hasLoadedInitialData) {
-            createChatUI();
-            setupEventListeners();
-            loadChatHistory();
-            subscribeBroadcast();
-        }
-    }, 1000); // Check every second
-}
-
-// Sync with content script to get current state
-async function syncWithContentScript() {
-    try {
-        // Try to get the tab that has Hyperliquid open
-        const tabs = await chrome.tabs.query({ url: "*://app.hyperliquid.xyz/trade*" });
-        
-        if (tabs && tabs.length > 0) {
-            // Try each tab until we get a response
-            for (const tab of tabs) {
-                try {
-                    const response = await new Promise((resolve, reject) => {
-                        chrome.tabs.sendMessage(tab.id, { action: 'getCurrentRoom' }, (response) => {
-                            if (chrome.runtime.lastError) {
-                                reject(chrome.runtime.lastError);
-                            } else {
-                                resolve(response);
-                            }
-                        });
-                    });
-                    
-                    if (response && response.pair && response.pair !== 'UNKNOWN') {
-                        // Update our state with content script's data
-                        currentPair = response.pair;
-                        currentMarket = response.market || 'Perps';
-                        
-                        if (response.messages) {
-                            messages = response.messages;
-                        }
-                        
-                        if (response.walletAddress) {
-                            walletAddress = response.walletAddress;
-                            availableNames = response.availableNames || [];
-                            selectedName = response.selectedName || '';
-                            hasBackendAuth = response.hasBackendAuth || false;
-                        }
-                        
-                        // console.log('✅ Synced with content script from tab:', {
-                        //     tabId: tab.id,
-                        //     pair: currentPair,
-                        //     market: currentMarket,
-                        //     messageCount: messages.length,
-                        //     walletConnected: !!walletAddress
-                        // });
-                        
-                        // If this is first load, add a delay before creating UI
-                        if (!hasLoadedInitialData) {
-                            await new Promise(resolve => setTimeout(resolve, 2000));
-                            hasLoadedInitialData = true;
-                            
-                            // Now create the UI since we have data
-                            createChatUI();
-                            setupEventListeners();
-                            loadChatHistory();
-                            subscribeBroadcast();
-                        } else {
-                            // Already loaded, just update UI
-                            updateChatHeader();
-                            updateMessagesUI();
-                        }
-                        
-                        // Successfully synced, no need to check other tabs
-                        return;
-                    }
-                } catch (error) {
-                    console.log(`Could not sync with tab ${tab.id}:`, error.message);
-                }
-            }
-        }
-        
-        // If we couldn't sync from any tab, keep showing "Waiting for Hyperliquid..."
-        // Don't update currentPair/currentMarket to avoid showing UNKNOWN
-        console.log('Waiting for Hyperliquid page to load...');
-        
-    } catch (error) {
-        console.log('Error in syncWithContentScript:', error);
-    }
-}
-
-// Create chat UI
-function createChatUI() {
-    const root = document.getElementById('sidepanel-root');
-    const roomId = `${currentPair}_${currentMarket}`;
-    const isConnected = !!walletAddress;
-
-    root.innerHTML = `
-        <div class="hl-chat-widget">
-            <div class="hl-chat-container visible">
-                <div class="hl-chat-header">
-                    <div class="hl-chat-title">
-                        <span class="hl-chat-pair">${currentPair}</span>
-                        <span class="hl-chat-market">${currentMarket ? currentMarket + ' Chat' : ''}</span>
-                    </div>
-                    <div class="hl-chat-autoscroll">
-                        <input type="checkbox" id="autoScrollCheckbox" ${autoScroll ? "checked" : ""}>
-                        <label for="autoScrollCheckbox">Auto-scroll</label>
-                    </div>
-                    <div class="hl-chat-controls">
-                        <button class="hl-sidepanel-close" id="closeSidePanel" title="Close side panel">×</button>
-                    </div>
-                </div>
-
-                <div class="hl-chat-content">
-                    <div class="hl-chat-messages" id="chatMessages">
-                        <div class="hl-loading">Loading ${roomId} chat...</div>
-                    </div>
-
-                    ${!isConnected ? `
-                    <div class="hl-chat-auth-bar" id="chatAuthBar">
-                        <div class="hl-auth-message">
-                            <span>Connect wallet via content script to send messages</span>
-                            <button class="hl-connect-btn-small" id="requestWalletConnection">Request Connection</button>
-                        </div>
-                    </div>
-                    ` : hasBackendAuth ? `
-                    <div class="hl-name-bar">
-                        <label class="hl-name-label">As:</label>
-                        <select id="hlNameSelect" class="hl-name-select-input">
-                            <option value="" ${selectedName === '' ? 'selected' : ''}>${formatAddress(walletAddress)}</option>
-                            ${availableNames.map(n => `<option value="${n}" ${n === selectedName ? 'selected' : ''}>${n}</option>`).join('')}
-                        </select>
-                        <button id="signOutButton" class="hl-sign-out-btn" style="margin-left: 10px; padding: 4px 8px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Sign Out</button>
-                    </div>
-                    <div class="hl-chat-input-container">
-                        <input 
-                            type="text" 
-                            class="hl-chat-input" 
-                            id="messageInput" 
-                            placeholder="Chat with ${roomId} traders..."
-                            maxlength="250"
-                        />
-                        <button class="hl-send-btn" id="sendMessage">Send</button>
-                    </div>
-                    ` : `
-                    <div class="hl-chat-auth-bar" id="chatAuthBar">
-                        <div class="hl-auth-message">
-                            <span>Wallet connected as ${formatAddress(walletAddress)}</span>
-                            <button class="hl-connect-btn-small" id="requestSignIn">Sign In to Chat</button>
-                        </div>
-                    </div>
-                    `}
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-// Setup event listeners
-function setupEventListeners() {
-
-    // Close side panel
-    const closeBtn = document.getElementById('closeSidePanel');
-    if (closeBtn) {
-        closeBtn.addEventListener('click', () => {
-            window.close();
-        });
-    }
-
-
-    // Auto-scroll toggle
-    const autoScrollCheckbox = document.getElementById('autoScrollCheckbox');
-    if (autoScrollCheckbox) {
-        autoScrollCheckbox.addEventListener('change', (e) => {
-            autoScroll = e.target.checked;
-            if (autoScroll) {
-                scrollToBottom();
-            }
-        });
-    }
-
-    // Request wallet connection (communicate with content script)
-    const requestConnectionBtn = document.getElementById('requestWalletConnection');
-    if (requestConnectionBtn) {
-        requestConnectionBtn.addEventListener('click', async () => {
-            try {
-                // Get the active tab
-                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-                if (tab && tab.url && tab.url.includes('app.hyperliquid.xyz')) {
-                    // Send message to content script to trigger wallet connection
-                    chrome.tabs.sendMessage(tab.id, { action: 'requestWalletConnection' });
-                } else {
-                    alert('Please navigate to app.hyperliquid.xyz/trade to connect your wallet');
-                }
-            } catch (error) {
-                console.error('Failed to request wallet connection:', error);
-                alert('Failed to request wallet connection. Please try connecting directly on the page.');
-            }
-        });
-    }
-
-    // Send message (only exists when fully authenticated)
-    const sendBtn = document.getElementById('sendMessage');
-    if (sendBtn) {
-        sendBtn.addEventListener('click', sendMessage);
-    }
-    
-    // Sign In button (when wallet connected but not authenticated)
-    const signInBtn = document.getElementById('requestSignIn');
-    if (signInBtn) {
-        signInBtn.addEventListener('click', async () => {
-            try {
-                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-                if (tab && tab.url && tab.url.includes('app.hyperliquid.xyz')) {
-                    chrome.tabs.sendMessage(tab.id, { action: 'requestSignIn' });
-                } else {
-                    alert('Please navigate to app.hyperliquid.xyz/trade to sign in');
-                }
-            } catch (error) {
-                console.error('Failed to request sign in:', error);
-            }
-        });
-    }
-    
-    // Sign out button
-    const signOutBtn = document.getElementById('signOutButton');
-    if (signOutBtn) {
-        signOutBtn.addEventListener('click', async () => {
-            try {
-                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-                if (tab && tab.url && tab.url.includes('app.hyperliquid.xyz')) {
-                    chrome.tabs.sendMessage(tab.id, { action: 'signOut' });
-                }
-            } catch (error) {
-                console.error('Failed to sign out:', error);
-            }
-        });
-    }
-
-    const messageInput = document.getElementById('messageInput');
-    if (messageInput) {
-        messageInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                sendMessage();
-            }
-        });
-    }
-
-    // Name select
-    const nameSelect = document.getElementById('hlNameSelect');
-    if (nameSelect) {
-        nameSelect.addEventListener('change', async (e) => {
-            selectedName = e.target.value;
-
-            // Store the selected name in Chrome storage
-            chrome.storage.local.set({ selectedName: selectedName });
-
-            // Sync with content script
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (tab && tab.url && tab.url.includes('app.hyperliquid.xyz')) {
-                chrome.tabs.sendMessage(tab.id, {
-                    action: 'updateSelectedName',
-                    selectedName: selectedName
-                });
-            }
-        });
-    }
-
-    // Element link clicks - delegated event listener for element links in chat messages
-    const messagesContainer = document.getElementById("chatMessages");
-    if (messagesContainer) {
-        messagesContainer.addEventListener('click', async (event) => {
-            const link = event.target.closest('a.hl-element-link');
-
-            if (link) {
-                event.preventDefault();
-                const elementSelector = link.dataset.elementSelector;
-                const elementId = link.dataset.elementId; // Fallback for legacy links
-
-                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-                if (tab && tab.id) {
-                    if (elementSelector) {
-                        chrome.tabs.sendMessage(tab.id, {
-                            action: 'scrollToElement',
-                            elementSelector: elementSelector,
-                            elementId: elementId
-                        }).then((response) => {
-                        }).catch((error) => {
-                        });
-                    } else if (elementId) {
-                        // Legacy fallback
-                        chrome.tabs.sendMessage(tab.id, {
-                            action: 'scrollToElement',
-                            elementSelector: elementSelector,
-                            elementId: elementId
-                        }).then((response) => {
-                        }).catch((error) => {
-                        });
-                    }
-                } else {
-                    console.warn('No active tab found');
-                }
-            }
-        });
-    }
-}
-
-// Load chat history
-async function loadChatHistory() {
-    if (!supabase) {
-        console.warn('Supabase not initialized');
-        return;
-    }
-
-    const roomId = `${currentPair}_${currentMarket}`;
-    console.log(`Loading chat history for room: ${roomId}`);
-
-    try {
-        const { data, error } = await supabase
-            .from('messages')
-            .select('*')
-            .eq('room', roomId)
-            .order('timestamp', { ascending: true });
-
-        if (error) {
-            console.error('Error loading chat history:', error);
-            updateMessagesUI('<div class="hl-error">Failed to load chat history</div>');
-            return;
-        }
-
-        messages = data || [];
-        updateMessagesUI();
-        scrollToBottom();
-        
-        // Load P&L data for all users and start polling
-        loadAllUserPnL();
-        startPnLPolling();
-
-    } catch (error) {
-        updateMessagesUI('<div class="hl-error">Failed to load chat history</div>');
-    }
-}
-
-// Subscribe to real-time updates
-function subscribeBroadcast() {
-    if (!supabase) return;
-
-    const roomId = `${currentPair}_${currentMarket}`;
-    console.log(`Subscribing to broadcast for room: ${roomId}`);
-
-    const channel = supabase.channel(`room_${roomId}`, {
-        config: { broadcast: { ack: true } },
+    const login = await callContentScript({
+      action: 'signTypedData',
+      typedData: loginTypedData(address),
     })
-    .on('broadcast', { event: 'new-message' }, (payload) => {
-        console.log('Received broadcast message:', payload);
-        const msg = payload.payload;
+    const identity = await identityFromLoginSignature(address, login.signature)
 
-        if (msg.room === roomId && msg.address !== walletAddress) {
-            messages.push(msg);
-            
-            // Load P&L for new user if not cached
-            if (!userPnLCache.has(msg.address)) {
-                loadPnLForAddress(msg.address);
-            }
-            
-            updateMessagesUI();
-            scrollToBottom();
-        }
-    })
-    .subscribe((status) => {
-        //console.log(`Broadcast subscription status for ${roomId}:`, status);
-    });
+    const typedData = bindingTypedData(address, identity.pubkey, Date.now())
+    const binding = await callContentScript({ action: 'signTypedData', typedData })
+    const bindingEvent = buildBindingEvent(identity, binding.signature, typedData)
 
-    realtimeChannel = channel;
+    await saveIdentity(identity, bindingEvent)
+    state.identity = identity
+    client.setIdentity(identity)
+    await client.publishBinding(bindingEvent)
+
+    await loadNames(address)
+  } catch (error) {
+    console.error('Sign in failed:', error)
+    alert(`Sign in failed: ${error.message}`)
+  } finally {
+    state.signingIn = false
+    renderShell()
+  }
 }
 
-// Send message (delegate to content script)
-async function sendMessage() {
-    const input = document.getElementById('messageInput');
-    const content = input.value.trim();
+async function restoreIdentity() {
+  const stored = await loadIdentity()
+  if (!stored) return
 
-    if (!content) return;
+  state.identity = stored.identity
+  client.setIdentity(stored.identity)
 
-    if (!walletAddress) {
-        alert('Please connect your wallet first');
-        return;
-    }
+  // Re-announce on every start: it is one small event, and it means a relay that
+  // was wiped still knows who we are before our next message lands.
+  if (stored.bindingEvent) client.publishBinding(stored.bindingEvent).catch(() => {})
 
-    if (!hasBackendAuth) {
-        alert('Backend server not available. Messages cannot be sent at this time.');
-        return;
-    }
+  const stored_ = await chrome.storage.local.get(['selectedName'])
+  state.selectedName = stored_?.selectedName || ''
 
-    try {
-        // Get the active tab
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab && tab.url && tab.url.includes('app.hyperliquid.xyz')) {
-            // Send message to content script to handle message sending
-            chrome.tabs.sendMessage(tab.id, {
-                action: 'sendMessage',
-                content: content,
-                selectedName: selectedName
-            });
-
-            input.value = '';
-
-            // Optimistic UI update
-            const optimisticMessage = {
-                address: walletAddress,
-                name: selectedName,
-                content: content,
-                timestamp: Date.now(),
-                room: `${currentPair}_${currentMarket}`
-            };
-
-            messages.push(optimisticMessage);
-            
-            // Load P&L for current user if not cached
-            if (!userPnLCache.has(walletAddress)) {
-                loadPnLForAddress(walletAddress);
-            }
-            
-            updateMessagesUI();
-            scrollToBottom();
-
-        } else {
-            alert('Please navigate to app.hyperliquid.xyz/trade to send messages');
-        }
-    } catch (error) {
-        console.error('Failed to send message:', error);
-        alert('Failed to send message. Please try again.');
-    }
+  loadNames(stored.identity.address).catch(() => {})
 }
 
-// Update messages UI
-function updateMessagesUI(customHTML = null) {
-    const messagesContainer = document.getElementById('chatMessages');
+async function signOut() {
+  await clearIdentity()
+  await chrome.storage.local.remove(['selectedName'])
+  callContentScript({ action: 'forgetWallet' }).catch(() => {})
 
-    if (customHTML) {
-        messagesContainer.innerHTML = customHTML;
-        return;
-    }
-
-    if (messages.length === 0) {
-        const roomId = `${currentPair}_${currentMarket}`;
-        messagesContainer.innerHTML = `<div class="hl-loading">No messages yet in ${roomId}. Be the first to chat!</div>`;
-        return;
-    }
-
-    const messagesHTML = messages.map((msg, index) => {
-        const isOwn = msg.address === walletAddress;
-        const displayName = msg.name || formatAddress(msg.address);
-        const pnlDisplay = getPnLDisplayForAddress(msg.address);
-        const processedContent = replaceElementLinks(escapeHtml(msg.content));
-
-        return `
-            <div class="hl-message ${isOwn ? 'own' : ''}">
-                <div class="hl-message-header">
-                    <div class="hl-message-header-left">
-                        <span class="hl-message-address">${displayName}</span>
-                    </div>
-                    <div class="hl-message-header-right">
-                        ${pnlDisplay ? `<span class="hl-pnl-badge" data-address="${msg.address}" style="color: ${pnlDisplay.color};">${pnlDisplay.text}</span>` : ''}
-                        <span class="hl-message-time">${formatTime(msg.timestamp)}</span>
-                    </div>
-                </div>
-                <div class="hl-message-content">${processedContent}</div>
-            </div>
-        `;
-    }).join('');
-
-    messagesContainer.innerHTML = messagesHTML;
+  state.identity = null
+  state.availableNames = []
+  state.selectedName = ''
+  client.setIdentity(null)
+  renderShell()
 }
 
-// Update chat header
-function updateChatHeader() {
-    const pairElement = document.querySelector('.hl-chat-pair');
-    const marketElement = document.querySelector('.hl-chat-market');
-
-    if (pairElement) pairElement.textContent = currentPair;
-    if (marketElement) marketElement.textContent = currentMarket ? `${currentMarket} Chat` : '';
+async function loadNames(address) {
+  state.availableNames = await fetchHlNames(address)
+  renderShell()
 }
 
-// Utility functions
+// --- rendering ------------------------------------------------------------
+
 function formatAddress(address) {
-    if (!address) return '';
-    return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  if (!address) return ''
+  return `${address.slice(0, 6)}...${address.slice(-4)}`
 }
 
 function formatTime(timestamp) {
-    return new Date(timestamp).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-    });
+  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
 function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+  const div = document.createElement('div')
+  div.textContent = text
+  return div.innerHTML
+}
+
+function replaceElementLinks(content) {
+  try {
+    const config = ELEMENT_LINK_CONFIG['app.hyperliquid.xyz']
+    return config ? processElementLinks(content, config) : content
+  } catch (error) {
+    console.error('[SidePanel] Element links failed:', error)
+    return content
+  }
+}
+
+function relayLabel() {
+  const { connected, total } = state.relays
+  if (total === 0) return 'connecting...'
+  return `${connected.length}/${total} relays`
+}
+
+function renderShell() {
+  const root = document.getElementById('sidepanel-root')
+  if (!root) return
+
+  if (!state.uiReady) {
+    root.innerHTML = `
+      <div style="padding: 20px; text-align: center;">
+        <h3>Waiting for Hyperliquid...</h3>
+        <p>Open a market on app.hyperliquid.xyz/trade</p>
+      </div>
+    `
+    return
+  }
+
+  const roomId = `${state.pair}_${state.market}`
+  const signedIn = !!state.identity
+
+  root.innerHTML = `
+    <div class="hl-chat-widget">
+      <div class="hl-chat-container visible">
+        <div class="hl-chat-header">
+          <div class="hl-chat-title">
+            <span class="hl-chat-pair">${escapeHtml(state.pair)}</span>
+            <span class="hl-chat-market">${state.market ? escapeHtml(state.market) + ' Chat' : ''}</span>
+          </div>
+          <div class="hl-chat-autoscroll">
+            <input type="checkbox" id="autoScrollCheckbox" ${state.autoScroll ? 'checked' : ''}>
+            <label for="autoScrollCheckbox">Auto-scroll</label>
+          </div>
+          <div class="hl-chat-controls">
+            <span class="hl-relay-status" id="relayStatus" title="Relays carrying this room">${relayLabel()}</span>
+            <button class="hl-sidepanel-close" id="closeSidePanel" title="Close side panel">&times;</button>
+          </div>
+        </div>
+
+        <div class="hl-chat-content">
+          <div class="hl-chat-messages" id="chatMessages">
+            <div class="hl-loading">Loading ${escapeHtml(roomId)} chat...</div>
+          </div>
+
+          ${
+            signedIn
+              ? `
+          <div class="hl-name-bar">
+            <label class="hl-name-label">As:</label>
+            <select id="hlNameSelect" class="hl-name-select-input">
+              <option value="" ${state.selectedName === '' ? 'selected' : ''}>${formatAddress(state.identity.address)}</option>
+              ${state.availableNames
+                .map(
+                  (name) =>
+                    `<option value="${escapeHtml(name)}" ${name === state.selectedName ? 'selected' : ''}>${escapeHtml(name)}</option>`,
+                )
+                .join('')}
+            </select>
+            <button id="signOutButton" class="hl-sign-out-btn">Sign Out</button>
+          </div>
+          <div class="hl-chat-input-container">
+            <input type="text" class="hl-chat-input" id="messageInput"
+                   placeholder="Chat with ${escapeHtml(roomId)} traders..." maxlength="500" />
+            <button class="hl-send-btn" id="sendMessage">Send</button>
+          </div>
+          `
+              : `
+          <div class="hl-chat-auth-bar" id="chatAuthBar">
+            <div class="hl-auth-message">
+              <span>${state.signingIn ? 'Check your wallet...' : 'Sign in with your wallet to chat'}</span>
+              <button class="hl-connect-btn-small" id="signInButton" ${state.signingIn ? 'disabled' : ''}>
+                ${state.signingIn ? 'Signing in...' : 'Sign In'}
+              </button>
+            </div>
+          </div>
+          `
+          }
+        </div>
+      </div>
+    </div>
+  `
+
+  attachEventListeners()
+  renderMessages()
+}
+
+function renderMessages() {
+  const container = document.getElementById('chatMessages')
+  if (!container) return
+
+  // client.messages is the only copy. Keeping a second one in `state` meant sign
+  // out could leave the panel rendering an empty array the client never refilled.
+  const messages = client.messages
+
+  if (messages.length === 0) {
+    const roomId = `${state.pair}_${state.market}`
+    container.innerHTML = `<div class="hl-loading">No messages yet in ${escapeHtml(roomId)}. Be the first to chat!</div>`
+    return
+  }
+
+  const myAddress = state.identity?.address
+
+  container.innerHTML = messages
+    .map((message) => {
+      const isOwn = normalizeAddress(message.address) === normalizeAddress(myAddress)
+      const pnl = pnlCache.get(message.address)
+      // A name tag is only a claim until the chain agrees; verifyHlName resolves
+      // it in the background and re-renders.
+      const displayName = message.displayName || formatAddress(message.address)
+
+      return `
+        <div class="hl-message ${isOwn ? 'own' : ''}">
+          <div class="hl-message-header">
+            <div class="hl-message-header-left">
+              <span class="hl-message-address">${escapeHtml(displayName)}</span>
+            </div>
+            <div class="hl-message-header-right">
+              ${pnl ? `<span class="hl-pnl-badge" data-address="${escapeHtml(message.address)}" style="color: ${pnl.color};">${escapeHtml(pnl.text)}</span>` : ''}
+              <span class="hl-message-time">${formatTime(message.timestamp)}</span>
+            </div>
+          </div>
+          <div class="hl-message-content">${replaceElementLinks(escapeHtml(message.content))}</div>
+        </div>
+      `
+    })
+    .join('')
+
+  scrollToBottom()
+}
+
+function updateChatHeader() {
+  const pairElement = document.querySelector('.hl-chat-pair')
+  const marketElement = document.querySelector('.hl-chat-market')
+  const relayElement = document.getElementById('relayStatus')
+
+  if (pairElement) pairElement.textContent = state.pair
+  if (marketElement) marketElement.textContent = state.market ? `${state.market} Chat` : ''
+  if (relayElement) relayElement.textContent = relayLabel()
 }
 
 function scrollToBottom() {
-    if (!autoScroll) return;
-    const messagesContainer = document.getElementById('chatMessages');
-    if (messagesContainer) {
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-    }
+  if (!state.autoScroll) return
+  const container = document.getElementById('chatMessages')
+  if (container) container.scrollTop = container.scrollHeight
 }
 
-// Listen for wallet connection updates from content script
-chrome.runtime.onMessage.addListener((request) => {
-    if (request.action === 'walletConnected') {
-        walletAddress = request.walletAddress;
-        availableNames = request.availableNames || [];
-        selectedName = request.selectedName || '';
-        hasBackendAuth = request.hasBackendAuth || false;
-        
-        // Only recreate UI if we have valid pair data
-        if (hasLoadedInitialData && currentPair !== 'UNKNOWN') {
-            createChatUI(); // Recreate UI with connected state
-            setupEventListeners();
-            // Reload messages after UI recreation
-            loadChatHistory();
-        }
-    } else if (request.action === 'walletDisconnected') {
-        walletAddress = '';
-        availableNames = [];
-        selectedName = '';
-        hasBackendAuth = false;
+// --- events ---------------------------------------------------------------
 
-        // Clear stored wallet state
-        chrome.storage.local.remove(['walletConnected', 'walletAddress', 'availableNames', 'selectedName', 'hasBackendAuth']).catch(console.error);
+function attachEventListeners() {
+  document.getElementById('closeSidePanel')?.addEventListener('click', () => window.close())
 
-        // Only recreate UI if we have valid pair data
-        if (hasLoadedInitialData && currentPair !== 'UNKNOWN') {
-            createChatUI(); // Recreate UI with disconnected state
-            setupEventListeners();
-            // Reload messages after UI recreation
-            loadChatHistory();
-        }
+  document.getElementById('autoScrollCheckbox')?.addEventListener('change', (event) => {
+    state.autoScroll = event.target.checked
+    if (state.autoScroll) scrollToBottom()
+  })
+
+  document.getElementById('signInButton')?.addEventListener('click', signIn)
+  document.getElementById('signOutButton')?.addEventListener('click', signOut)
+  document.getElementById('sendMessage')?.addEventListener('click', sendMessage)
+
+  document.getElementById('messageInput')?.addEventListener('keypress', (event) => {
+    if (event.key === 'Enter') sendMessage()
+  })
+
+  document.getElementById('hlNameSelect')?.addEventListener('change', (event) => {
+    state.selectedName = event.target.value
+    chrome.storage.local.set({ selectedName: state.selectedName })
+  })
+
+  document.getElementById('chatMessages')?.addEventListener('click', async (event) => {
+    const link = event.target.closest('a.hl-element-link')
+    if (!link) return
+
+    event.preventDefault()
+    callContentScript({
+      action: 'scrollToElement',
+      elementSelector: link.dataset.elementSelector,
+      elementId: link.dataset.elementId,
+    }).catch(() => {})
+  })
+}
+
+async function sendMessage() {
+  const input = document.getElementById('messageInput')
+  const content = input?.value?.trim()
+  if (!content) return
+
+  if (!state.identity) {
+    alert('Sign in with your wallet first')
+    return
+  }
+
+  input.value = ''
+
+  try {
+    const result = await client.send(content, state.selectedName)
+
+    if (result.queued) {
+      console.warn('No relay reachable; message queued and will send on reconnect')
+    } else if (result.accepted.length === 0) {
+      const reason = result.rejected[0]?.reason || 'every relay rejected it'
+      alert(`Message not accepted: ${reason}`)
+    } else if (result.underpowered) {
+      console.warn('Proof of work timed out; some clients will not show this message')
     }
-});
+  } catch (error) {
+    console.error('Failed to send message:', error)
+    alert(`Failed to send message: ${error.message}`)
+  }
+}
 
-// P&L Helper Functions
-function getPnLDisplayForAddress(address) {
-    return userPnLCache.get(address) || null;
+// --- P&L ------------------------------------------------------------------
+
+async function loadPnLForAddress(address) {
+  if (!address) return
+
+  try {
+    const previous = pnlCache.get(address)
+    const display = await pnlService.getPnLDisplay(address, state.pair, state.market)
+    if (!display) return
+
+    pnlCache.set(address, display)
+
+    const badge = document.querySelector(`.hl-pnl-badge[data-address="${address}"]`)
+    if (!badge) return
+
+    if (previous && previous.raw !== display.raw) {
+      badge.classList.remove('pnl-updating', 'pnl-increase', 'pnl-decrease')
+      badge.classList.add('pnl-updating')
+
+      setTimeout(() => {
+        badge.textContent = display.text
+        badge.style.color = display.color
+        badge.classList.remove('pnl-updating')
+        badge.classList.add(display.raw > previous.raw ? 'pnl-increase' : 'pnl-decrease')
+        setTimeout(() => badge.classList.remove('pnl-increase', 'pnl-decrease'), 600)
+      }, 500)
+    } else if (!previous) {
+      badge.textContent = display.text
+      badge.style.color = display.color
+    }
+  } catch (error) {
+    console.error(`Failed to load P&L for ${address}:`, error)
+  }
 }
 
 async function loadAllUserPnL() {
-    if (!pnlService) {
-        console.warn('P&L service not initialized');
-        return;
-    }
+  const addresses = [...new Set(client.messages.map((message) => message.address).filter(Boolean))]
 
-    // Get unique addresses from messages in current room
-    const uniqueAddresses = [...new Set(messages.map(m => m.address).filter(a => a))];
-    console.log(`Loading P&L for ${uniqueAddresses.length} users in ${currentPair} room`);
-
-    // Load P&L for each address with delay to avoid rate limiting
-    for (let i = 0; i < uniqueAddresses.length; i++) {
-        const address = uniqueAddresses[i];
-        if (address) {
-            await loadPnLForAddress(address);
-            // Add 200ms delay between requests to avoid rate limiting
-            if (i < uniqueAddresses.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, 200));
-            }
-        }
-    }
-}
-
-async function loadPnLForAddress(address) {
-    if (!pnlService || !address) return;
-
-    try {
-        const oldPnL = userPnLCache.get(address);
-        console.log(`Loading P&L for ${address} on ${currentPair} ${currentMarket}`);
-        
-        // Check if this is one of the special addresses
-        const normalizedAddress = address.toLowerCase();
-        const isSpecialAddress = normalizedAddress === '0xf26f5551e96ae5162509b25925fffa7f07b2d652' || 
-                                normalizedAddress === 'testooor.hl';
-        
-        let pnlDisplay;
-        if (isSpecialAddress) {
-            // Override with 550k P&L
-            pnlDisplay = pnlService.formatPnL(550000);
-            console.log(`Special address detected - overriding P&L to +550K`);
-        } else {
-            pnlDisplay = await pnlService.getPnLDisplay(address, currentPair, currentMarket);
-        }
-        
-        console.log(`P&L result for ${address} on ${currentPair}:`, pnlDisplay);
-        
-        if (pnlDisplay) {
-            userPnLCache.set(address, pnlDisplay);
-            
-            // Update the UI with animation if P&L changed
-            const badge = document.querySelector(`.hl-pnl-badge[data-address="${address}"]`);
-            if (badge) {
-                // Check if value changed
-                if (oldPnL && oldPnL.raw !== pnlDisplay.raw) {
-                    // Remove previous animation classes
-                    badge.classList.remove('pnl-updating', 'pnl-increase', 'pnl-decrease');
-                    
-                    // Add updating animation
-                    badge.classList.add('pnl-updating');
-                    
-                    setTimeout(() => {
-                        badge.textContent = pnlDisplay.text;
-                        badge.style.color = pnlDisplay.color;
-                        badge.classList.remove('pnl-updating');
-                        
-                        // Add increase/decrease animation
-                        if (pnlDisplay.raw > oldPnL.raw) {
-                            badge.classList.add('pnl-increase');
-                        } else if (pnlDisplay.raw < oldPnL.raw) {
-                            badge.classList.add('pnl-decrease');
-                        }
-                        
-                        // Remove animation class after animation completes
-                        setTimeout(() => {
-                            badge.classList.remove('pnl-increase', 'pnl-decrease');
-                        }, 600);
-                    }, 500);
-                } else if (!oldPnL) {
-                    // First load, no animation
-                    badge.textContent = pnlDisplay.text;
-                    badge.style.color = pnlDisplay.color;
-                }
-            }
-        }
-    } catch (error) {
-        console.error(`Failed to load P&L for ${address}:`, error);
-    }
+  for (let index = 0; index < addresses.length; index++) {
+    await loadPnLForAddress(addresses[index])
+    // Spread the calls out; the Hyperliquid info endpoint rate limits bursts.
+    if (index < addresses.length - 1) await new Promise((resolve) => setTimeout(resolve, 200))
+  }
 }
 
 function startPnLPolling() {
-    // Clear any existing interval
-    if (pnlUpdateInterval) {
-        clearInterval(pnlUpdateInterval);
-    }
-
-    // Poll every 2 minutes (120000ms)
-    pnlUpdateInterval = setInterval(() => {
-        console.log('Updating P&L data...');
-        
-        // Clear cache to force fresh data
-        if (pnlService) {
-            pnlService.clearCache();
-        }
-        
-        // Reload P&L for all users
-        loadAllUserPnL();
-    }, 120000); // 2 minutes
+  stopPnLPolling()
+  pnlPollTimer = setInterval(() => {
+    pnlService.clearCache()
+    loadAllUserPnL()
+  }, 120000)
 }
 
 function stopPnLPolling() {
-    if (pnlUpdateInterval) {
-        clearInterval(pnlUpdateInterval);
-        pnlUpdateInterval = null;
-    }
+  if (pnlPollTimer) {
+    clearInterval(pnlPollTimer)
+    pnlPollTimer = null
+  }
 }
 
-// Import shared modules at build time
-import { ELEMENT_LINK_CONFIG, processElementLinks } from './links-config.js';
+// --- name verification ----------------------------------------------------
 
-// Element links config and utils loaded
-let elementLinkConfig = ELEMENT_LINK_CONFIG;
-let elementLinksUtils = { processElementLinks };
-let configLoaded = true;
+// Resolve claimed .hl names against on-chain ownership, then re-render. Until a
+// name checks out the author shows as their address, so a stolen handle never
+// renders as the real one.
+async function resolveDisplayNames(messages) {
+  let changed = false
 
-// Element links are already loaded inline - no initialization needed
+  await Promise.all(
+    messages.map(async (message) => {
+      if (message.displayName) return
+      if (!message.name) {
+        message.displayName = formatAddress(message.address)
+        changed = true
+        return
+      }
 
-// Replace element links in message content for sidepanel
-function replaceElementLinks(content) {
-    // Feature isolation: Element links should not break if they fail
-    try {
-        const configForHost = elementLinkConfig['app.hyperliquid.xyz'];
+      const owned = await verifyHlName(message.address, message.name)
+      message.displayName = owned ? message.name : formatAddress(message.address)
+      changed = true
+    }),
+  )
 
-        if (!configForHost) {
-            return content;
-        }
-
-        // Use the inline processing function
-        const result = processElementLinks(content, configForHost);
-
-        return result;
-    } catch (error) {
-        console.error('[SidePanel] Failed to replace element links:', error);
-        // Return original content if feature fails
-        return content;
-    }
+  return changed
 }
 
-// Initialize when DOM is ready
+// --- startup --------------------------------------------------------------
+
+client.onMessages(async (messages) => {
+  renderMessages()
+
+  if (await resolveDisplayNames(messages)) renderMessages()
+
+  for (const message of messages) {
+    if (!pnlCache.has(message.address)) loadPnLForAddress(message.address)
+  }
+})
+
+client.onStatus((status) => {
+  state.relays = status
+  updateChatHeader()
+})
+
+chrome.runtime.onMessage.addListener((request) => {
+  if (request.action === 'roomChange' && request.pair) {
+    state.pair = request.pair
+    state.market = request.market || 'Perps'
+    enterRoom()
+  } else if (request.action === 'closeSidePanel') {
+    window.close()
+  }
+})
+
+async function main() {
+  renderShell()
+  client.start()
+  await restoreIdentity()
+
+  // The content script may not have detected the market yet; keep asking.
+  const synced = await syncRoomFromPage()
+  if (!synced) {
+    const poll = setInterval(async () => {
+      if (await syncRoomFromPage()) clearInterval(poll)
+    }, 1000)
+  }
+
+  // Keep following the page if the trader switches markets with the panel open.
+  setInterval(syncRoomFromPage, 5000)
+}
 
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        initializeSupabase();
-    });
+  document.addEventListener('DOMContentLoaded', main)
 } else {
-    initializeSupabase();
+  main()
 }

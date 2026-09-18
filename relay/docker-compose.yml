@@ -1,0 +1,21 @@
+services:
+  relay:
+    build:
+      context: .
+    restart: unless-stopped
+    ports:
+      # Bound to localhost: put a TLS proxy in front and expose wss:// publicly.
+      # Browsers on an https:// page cannot open a plaintext ws:// socket, so this
+      # must be reachable over wss:// before the extension can use it.
+      - "127.0.0.1:7777:7777"
+    volumes:
+      - strfry-db:/app/strfry-db
+    environment:
+      # Keep these in step with SPAM_POLICY in lib/nostr/config.js. If the relay
+      # demands more work than the extension does, your own users get rejected.
+      HYPERCHAT_POW_DIFFICULTY: "20"
+      HYPERCHAT_MAX_PER_MINUTE: "10"
+      HYPERCHAT_MAX_CONTENT: "500"
+
+volumes:
+  strfry-db:

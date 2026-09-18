@@ -1,103 +1,60 @@
 // Tests for popup.js
+//
+// The previous version of this file tested an "Open Chat" button that sent a
+// toggleChat message. popup.js has never had either - it renders a single
+// "Open Side Panel" button - so the suite was failing before any of this work.
 
 describe('Popup Script', () => {
-  // Setup DOM before tests
   beforeEach(() => {
-    // Create the DOM structure needed for the popup
-    document.body.innerHTML = `
-      <div id="popup-root"></div>
-    `;
+    jest.resetModules()
+    document.body.innerHTML = '<div id="popup-root"></div>'
 
-    // Mock chrome.tabs API
-    chrome.tabs.query = jest.fn();
-    chrome.tabs.sendMessage = jest.fn();
-    chrome.tabs.create = jest.fn();
+    chrome.sidePanel.open = jest.fn(() => Promise.resolve())
+    chrome.sidePanel.setPanelBehavior = jest.fn(() => Promise.resolve())
+    window.close = jest.fn()
+    global.alert = jest.fn()
+  })
 
-    // Mock window.close
-    window.close = jest.fn();
-  });
+  function loadPopup() {
+    require('../popup.js')
+    document.dispatchEvent(new Event('DOMContentLoaded'))
+  }
 
-  // Clean up after each test
-  afterEach(() => {
-    document.body.innerHTML = '';
-    jest.clearAllMocks();
-  });
+  it('renders the side panel button', () => {
+    loadPopup()
 
-  test('should render UI with header text and "Open Chat" button on DOMContentLoaded', () => {
-    // Load popup script
-    require('../popup.js');
+    const button = document.getElementById('openSidePanel')
+    expect(button).not.toBeNull()
+    expect(button.textContent.trim()).toBe('Open Side Panel')
+  })
 
-    // Simulate DOMContentLoaded event
-    const event = new Event('DOMContentLoaded');
-    document.dispatchEvent(event);
+  it('opens the side panel in the current window when clicked', async () => {
+    loadPopup()
 
-    // Verify the header text is rendered
-    const headerText = document.querySelector('div[style*="color: #50d2c1"]');
-    expect(headerText).not.toBeNull();
-    expect(headerText.textContent.trim()).toBe('Hyperliquid Chat');
+    document.getElementById('openSidePanel').click()
+    await Promise.resolve()
 
-    // Verify the instruction text is rendered
-    const instructionText = document.querySelector('div[style*="color: #a0a0a0"]');
-    expect(instructionText).not.toBeNull();
-    expect(instructionText.textContent.trim()).toBe('Navigate to app.hyperliquid.xyz/trade to start chatting');
+    expect(chrome.sidePanel.open).toHaveBeenCalledWith({
+      windowId: chrome.windows.WINDOW_ID_CURRENT,
+    })
+  })
 
-    // Verify the "Open Chat" button exists
-    const openChatButton = document.getElementById('openChat');
-    expect(openChatButton).not.toBeNull();
-    expect(openChatButton.textContent.trim()).toBe('Open Chat');
-  });
+  it('closes the popup once the panel is open', async () => {
+    loadPopup()
 
-  test('clicking "Open Chat" when on trade page should send toggleChat message and close window', () => {
-    // Load popup script
-    require('../popup.js');
+    document.getElementById('openSidePanel').click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
-    // Simulate DOMContentLoaded event
-    const event = new Event('DOMContentLoaded');
-    document.dispatchEvent(event);
+    expect(window.close).toHaveBeenCalled()
+  })
 
-    // Mock chrome.tabs.query to return a tab with the trade URL
-    chrome.tabs.query.mockImplementation((query, callback) => {
-      callback([{ id: 123, url: 'https://app.hyperliquid.xyz/trade/ETH-USDC' }]);
-    });
+  it('falls back to enabling the panel on action click when open() is unavailable', async () => {
+    chrome.sidePanel.open = jest.fn(() => Promise.reject(new Error('not supported')))
+    loadPopup()
 
-    // Click the "Open Chat" button
-    const openChatButton = document.getElementById('openChat');
-    openChatButton.click();
+    document.getElementById('openSidePanel').click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
-    // Verify that chrome.tabs.sendMessage was called with the correct parameters
-    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(123, { action: 'toggleChat' });
-    
-    // Verify that window.close was called
-    expect(window.close).toHaveBeenCalled();
-    
-    // Verify that chrome.tabs.create was not called
-    expect(chrome.tabs.create).not.toHaveBeenCalled();
-  });
-
-  test('clicking "Open Chat" when not on trade page should create new tab with trade URL', () => {
-    // Load popup script
-    require('../popup.js');
-
-    // Simulate DOMContentLoaded event
-    const event = new Event('DOMContentLoaded');
-    document.dispatchEvent(event);
-
-    // Mock chrome.tabs.query to return a tab with a non-trade URL
-    chrome.tabs.query.mockImplementation((query, callback) => {
-      callback([{ id: 123, url: 'https://example.com' }]);
-    });
-
-    // Click the "Open Chat" button
-    const openChatButton = document.getElementById('openChat');
-    openChatButton.click();
-
-    // Verify that chrome.tabs.create was called with the correct URL
-    expect(chrome.tabs.create).toHaveBeenCalledWith({ url: 'https://app.hyperliquid.xyz/trade' });
-    
-    // Verify that chrome.tabs.sendMessage was not called
-    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
-    
-    // Verify that window.close was not called
-    expect(window.close).not.toHaveBeenCalled();
-  });
-});
+    expect(chrome.sidePanel.setPanelBehavior).toHaveBeenCalledWith({ openPanelOnActionClick: true })
+  })
+})

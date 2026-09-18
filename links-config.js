@@ -78,8 +78,3 @@ function processElementLinks(content, config) {
 
 // Export for ES6 modules (sidepanel only)
 export { ELEMENT_LINK_CONFIG, processElementLinks };
-
-// Export for CommonJS (for potential Node.js usage)
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { ELEMENT_LINK_CONFIG, processElementLinks };
-}

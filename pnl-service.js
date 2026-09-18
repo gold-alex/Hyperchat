@@ -404,6 +404,4 @@ if (typeof window !== 'undefined') {
   window.PnLService = PnLService;
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = PnLService;
-}
+export default PnLService;
